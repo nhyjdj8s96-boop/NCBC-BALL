@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 
-const TEAM_SIZE = 5;
+const DEFAULT_TEAM_SIZE = 5;
 const ADMIN_PIN = "1234";
 const ADMIN_TIMEOUT = 10 * 60 * 1000;
 const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
@@ -18,7 +18,7 @@ const KNOWN_PLAYERS = [
   "Daniel Kim", "Donny Hua", "Freddy Bongiorno", "Gabe Halle", "Jeff Park",
   "John Kim", "Josh Aurdos", "Josh Kim", "Josh Wong", "Josue George",
   "Luke Li", "Mark Nagrampa", "Matt Kim", "Melvin George", "Nathan Samara",
-  "Pastor Jacob Halle", "Pastor James Choi", "Sam Livermore", "Sherif Wilson",
+  "Pastor Jacob Halle", "Pastor James Choi", "Sam Livermore", "Sharif Wilson",
 ];
 
 let _uid = 1;
@@ -49,9 +49,9 @@ function sortQueue(players) {
   });
 }
 
-function pickNextTeam(pool) {
+function pickNextTeam(pool, teamSize) {
   const s = sortQueue(pool);
-  return { nextTeam: s.slice(0, TEAM_SIZE).map(p => ({ ...p, hasPlayed: true })), bench: s.slice(TEAM_SIZE) };
+  return { nextTeam: s.slice(0, teamSize).map(p => ({ ...p, hasPlayed: true })), bench: s.slice(teamSize) };
 }
 
 function loadSaved() {
@@ -79,10 +79,10 @@ function waitHeat(roundsWaited) {
   return { background: "transparent", color: "#8E8E93" };
 }
 
-// Queue-position heat — only the next TEAM_SIZE players (who play the very
+// Queue-position heat — only the next teamSize players (who play the very
 // next game) are highlighted; everyone else is neutral.
-function positionHeat(pos) {
-  if (pos <= TEAM_SIZE) return { background: "#FFE5E0", color: "#D32F2F" };
+function positionHeat(pos, teamSize) {
+  if (pos <= teamSize) return { background: "#FFE5E0", color: "#D32F2F" };
   return { background: "transparent", color: "#8E8E93" };
 }
 
@@ -140,46 +140,56 @@ function ConfirmModal({ moveConfirm, setMoveConfirm }) {
 
 function SetupChips({ setupPlayers, addPlayer }) {
   const added = new Set(setupPlayers.map(p => p.name.toLowerCase()));
-  const sk = n => {
-    const parts = n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/);
-    return parts.length > 1 ? parts[parts.length - 1] + " " + parts.slice(0, -1).join(" ") : parts[0];
-  };
-  const avail = KNOWN_PLAYERS.filter(n => !added.has(n.toLowerCase())).sort((a, b) => sk(a).localeCompare(sk(b)));
-  if (!avail.length) return null;
+  const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
+  // Full roster, sorted once — position never changes as people sign up.
+  // Signed-up players grey out with a checkmark instead of disappearing,
+  // so nothing reshuffles and your eye never loses its place.
+  const all = [...KNOWN_PLAYERS].sort((a, b) => firstName(a).localeCompare(firstName(b)));
   return (
     <div style={s.card}>
       <p style={s.sectionLabel}>Tap your name to sign up</p>
       <div style={s.chipGrid}>
-        {avail.map(n => (
-          <button key={n} style={s.chip} onClick={() => addPlayer(n)}>
-            <span style={{ ...s.chipAvatar, background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }}>{nameInitials(n)}</span>
-            <span style={s.chipName}>{n}</span>
-          </button>
-        ))}
+        {all.map(n => {
+          const isIn = added.has(n.toLowerCase());
+          return (
+            <button key={n} style={{ ...s.chip, ...(isIn ? s.chipDone : {}) }} onClick={() => { if (!isIn) addPlayer(n); }}>
+              <span style={{ ...s.chipAvatar, ...(isIn ? s.chipAvatarDone : { background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }) }}>
+                {isIn ? "✓" : nameInitials(n)}
+              </span>
+              <span style={{ ...s.chipName, ...(isIn ? s.chipNameDone : {}) }}>{n}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
 }
 
 function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer }) {
-  const all = [...teamA, ...teamB, ...queue, ...sittingOut, ...left];
-  const added = new Set(all.map(p => p.name.toLowerCase()));
+  const allActive = [...teamA, ...teamB, ...queue, ...sittingOut, ...left];
+  const added = new Set(allActive.map(p => p.name.toLowerCase()));
   const sk = n => {
     const parts = n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/);
     return parts.length > 1 ? parts[parts.length - 1] + " " + parts.slice(0, -1).join(" ") : parts[0];
   };
-  const avail = KNOWN_PLAYERS.filter(n => !added.has(n.toLowerCase())).sort((a, b) => sk(a).localeCompare(sk(b)));
-  if (!avail.length) return null;
+  const all = [...KNOWN_PLAYERS].sort((a, b) => sk(a).localeCompare(sk(b)));
+  const anyAvailable = all.some(n => !added.has(n.toLowerCase()));
+  if (!anyAvailable) return null;
   return (
     <div style={s.card}>
       <p style={s.sectionLabel}>On the list, just running late?</p>
       <div style={s.chipGrid}>
-        {avail.map(n => (
-          <button key={n} style={s.chip} onClick={() => addPlayer(n)}>
-            <span style={{ ...s.chipAvatar, background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }}>{nameInitials(n)}</span>
-            <span style={s.chipName}>{n}</span>
-          </button>
-        ))}
+        {all.map(n => {
+          const isIn = added.has(n.toLowerCase());
+          return (
+            <button key={n} style={{ ...s.chip, ...(isIn ? s.chipDone : {}) }} onClick={() => { if (!isIn) addPlayer(n); }}>
+              <span style={{ ...s.chipAvatar, ...(isIn ? s.chipAvatarDone : { background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }) }}>
+                {isIn ? "✓" : nameInitials(n)}
+              </span>
+              <span style={{ ...s.chipName, ...(isIn ? s.chipNameDone : {}) }}>{n}</span>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
@@ -239,6 +249,7 @@ export default function App() {
   const [adminCountdown, setAdminCountdown] = useState(null);
 
   const [view, setView] = useState(saved?.view ?? VIEWS.SETUP);
+  const [teamSize, setTeamSize] = useState(saved?.teamSize ?? DEFAULT_TEAM_SIZE);
   const [nameInput, setNameInput] = useState("");
   const [setupPlayers, setSetupPlayers] = useState(saved?.setupPlayers ?? []);
   const [joinCounter, setJoinCounter] = useState(saved?.joinCounter ?? 0);
@@ -294,8 +305,8 @@ export default function App() {
 
   // persist
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history })); } catch {}
-  }, [view, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history })); } catch {}
+  }, [view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
 
   // timer
   const [timerSeconds, setTimerSeconds] = useState(TIMER_DURATION);
@@ -401,18 +412,18 @@ export default function App() {
   const removeSetup = withAdmin(id => setSetupPlayers(prev => prev.filter(p => p.id !== id)));
 
   const startSession = () => {
-    if (setupPlayers.length < 10) return;
+    if (setupPlayers.length < teamSize * 2) return;
     const sorted = sortQueue(setupPlayers);
     // First 10 signups still play first, but the Home/Away split among them
     // is random — not "first 5 vs next 5" by signup order.
-    const firstTen = sorted.slice(0, TEAM_SIZE * 2);
+    const firstTen = sorted.slice(0, teamSize * 2);
     for (let i = firstTen.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [firstTen[i], firstTen[j]] = [firstTen[j], firstTen[i]];
     }
-    setTeamA(firstTen.slice(0, TEAM_SIZE).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
-    setTeamB(firstTen.slice(TEAM_SIZE).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
-    setQueue(sortQueue(sorted.slice(TEAM_SIZE * 2).map(p => ({ ...p, hasPlayed: true }))));
+    setTeamA(firstTen.slice(0, teamSize).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
+    setTeamB(firstTen.slice(teamSize).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
+    setQueue(sortQueue(sorted.slice(teamSize * 2).map(p => ({ ...p, hasPlayed: true }))));
     setSittingOut([]); setInjured([]); setLeft([]); setGameCount(1); setLastResult(null); setHistory([]);
     setView(VIEWS.GAME); if (isAdmin) logout();
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -519,8 +530,12 @@ export default function App() {
     const subbed = team.find(x => x.id === playerId); if (!subbed) return;
     const inc = getIncoming(); if (!inc) return;
     const fromQ = queue.some(x => x.id === inc.id);
-    if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...subbed, hasPlayed: true, gamesPlayed: (subbed.gamesPlayed || 0) + 1 }]); }
-    else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => [...prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...subbed, hasPlayed: true, gamesPlayed: (subbed.gamesPlayed || 0) + 1 }]); }
+    // "Needs a break" — guaranteed back in the queue after exactly one game,
+    // no manual "Back in" tap required. Same guaranteed-return mechanism as
+    // skipOneGame. Injuries are different: they wait until manually cleared.
+    const skipTarget = gameCount + 1;
+    if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...subbed, hasPlayed: true, gamesPlayed: (subbed.gamesPlayed || 0) + 1, skipUntilGame: skipTarget }]); }
+    else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => [...prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...subbed, hasPlayed: true, gamesPlayed: (subbed.gamesPlayed || 0) + 1, skipUntilGame: skipTarget }]); }
     setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     const tick = (subbed.winStreak || 0) === 0;
     if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
@@ -583,7 +598,7 @@ export default function App() {
     const fromQ = queue.some(x => x.id === inc.id);
     const out = injury
       ? { ...replaced, hasPlayed: true, gamesPlayed: (replaced.gamesPlayed || 0) + 1, winStreak: 0 }
-      : { ...replaced, hasPlayed: true, gamesPlayed: (replaced.gamesPlayed || 0) + 1 };
+      : { ...replaced, hasPlayed: true, gamesPlayed: (replaced.gamesPlayed || 0) + 1, skipUntilGame: gameCount + 1 };
     if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => injury ? prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })) : [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), out]); }
     else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => injury ? prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })) : [...prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), out]); }
     setInjured(prev => injury ? [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), out] : prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
@@ -628,9 +643,9 @@ export default function App() {
     const soAged = streakOut.map(p => ({ ...p, winStreak: 0, roundsWaited: 0, hasPlayed: true, streakedOut: true }));
     // Sitting Out and Injured stay in their sections, just accumulating wait
     const pool = sortQueue([...agedQ, ...loserAged]);
-    const { nextTeam: challenger, bench: nq } = pickNextTeam(pool);
+    const { nextTeam: challenger, bench: nq } = pickNextTeam(pool, teamSize);
     let fillers = [], bench2 = nq;
-    if (streakOut.length > 0) { const { nextTeam: fill, bench: af } = pickNextTeam(nq); fillers = fill.slice(0, streakOut.length).map(p => ({ ...p, roundsWaited: 0, streakedOut: false })); bench2 = [...af, ...fill.slice(streakOut.length)]; }
+    if (streakOut.length > 0) { const { nextTeam: fill, bench: af } = pickNextTeam(nq, teamSize); fillers = fill.slice(0, streakOut.length).map(p => ({ ...p, roundsWaited: 0, streakedOut: false })); bench2 = [...af, ...fill.slice(streakOut.length)]; }
     const winTeam = [...staying, ...fillers];
     const finalQ = sortQueue([...bench2, ...soAged]);
     if (winnerIsA) { setTeamA(winTeam); setTeamB(challenger.map(p => ({ ...p, roundsWaited: 0, streakedOut: false }))); }
@@ -648,7 +663,7 @@ export default function App() {
     setAnimKey(k => k + 1); setLastWinner(winnerIsA ? "A" : "B");
     const fc = wantsOut.length - replaceable;
     const hw = winnerIsA ? "Home" : "Away", lw = winnerIsA ? "Away" : "Home";
-    if (streakOut.length === TEAM_SIZE) setLastResult({ winner: "Full streak — entire team rotates off", loser: "" });
+    if (streakOut.length === teamSize) setLastResult({ winner: "Full streak — entire team rotates off", loser: "" });
     else if (streakOut.length > 0 && fc > 0) setLastResult({ winner: hw + " stays on - " + streakOut.length + " streak players rotate out", loser: fc + " streak player(s) forced to stay — short queue" });
     else if (streakOut.length > 0) setLastResult({ winner: hw + " stays on - " + streakOut.length + " streak player(s) rotate out", loser: lw + " sits" });
     else setLastResult({ winner: hw + " stays on", loser: lw + " sits" });
@@ -698,6 +713,22 @@ export default function App() {
         ) : (
           <button style={s.adminUnlockBtn} onClick={() => setPinModal(true)}>🔒 Admin</button>
         )}
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Game format</p>
+          <div style={{ display: "flex", gap: 10 }}>
+            <button
+              style={{ ...s.formatBtn, ...(teamSize === 4 ? s.formatBtnActive : {}) }}
+              disabled={setupPlayers.length > 0}
+              onClick={() => setTeamSize(4)}
+            >4v4</button>
+            <button
+              style={{ ...s.formatBtn, ...(teamSize === 5 ? s.formatBtnActive : {}) }}
+              disabled={setupPlayers.length > 0}
+              onClick={() => setTeamSize(5)}
+            >5v5</button>
+          </div>
+          {setupPlayers.length > 0 && <p style={s.formatLockedHint}>Clear signups to change format</p>}
+        </div>
         <SetupChips setupPlayers={setupPlayers} addPlayer={addPlayer} />
         <div style={s.card}>
           <p style={s.sectionLabel}>Not on the list?</p>
@@ -710,7 +741,7 @@ export default function App() {
           <div style={s.countRow}>
             <span style={s.countNum}>{setupPlayers.length}</span>
             <span style={s.countLabel}> signed up</span>
-            {setupPlayers.length >= 10 && <span style={s.teamsTag}>{Math.floor(setupPlayers.length / TEAM_SIZE)} teams</span>}
+            {setupPlayers.length >= teamSize * 2 && <span style={s.teamsTag}>{Math.floor(setupPlayers.length / teamSize)} teams</span>}
           </div>
           {setupPlayers.map((p, i) => (
             <div key={p.id} style={s.playerRow}>
@@ -721,8 +752,8 @@ export default function App() {
           ))}
           {setupPlayers.length === 0 && <p style={s.warn}>No one signed up yet</p>}
         </div>
-        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < 10 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < 10} onClick={startSession}>
-          {setupPlayers.length >= 10 ? "Run It 🏀" : "Need " + (10 - setupPlayers.length) + " more to start"}
+        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < teamSize * 2 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < teamSize * 2} onClick={startSession}>
+          {setupPlayers.length >= teamSize * 2 ? "Run It 🏀" : "Need " + (teamSize * 2 - setupPlayers.length) + " more to start"}
         </button>
       </div>
     );
@@ -1043,18 +1074,18 @@ export default function App() {
         <ZoneSection title={"Up next - " + sortedQ.length + " waiting"} accent="#34C759">
           {sortedQ.map((p, i) => {
             const pos = i + 1;
-            const posLabel = pos <= TEAM_SIZE ? "Playing next" : pos <= TEAM_SIZE * 2 ? "Playing in 2" : "~" + Math.ceil(pos / TEAM_SIZE) + " games wait";
+            const posLabel = pos <= teamSize ? "Playing next" : pos <= teamSize * 2 ? "Playing in 2" : "~" + Math.ceil(pos / teamSize) + " games wait";
             const parts = [];
             if (p.roundsWaited > 0) parts.push("sat " + p.roundsWaited);
             if ((p.gamesPlayed || 0) > 0) parts.push("played " + p.gamesPlayed);
             return (
               <PlayerRow key={p.id} player={p} pos={pos}
-                heatBg={positionHeat(pos).background}
+                heatBg={positionHeat(pos, teamSize).background}
                 meta={posLabel + (parts.length ? " - " + parts.join(" - ") : "")}
                 badge={p.streakedOut ? <span style={s.badgeStreaked}>won 2 straight</span> : null}
                 actions={isAdmin && (
                   <div style={{ display: "flex", gap: 6 }}>
-                    {pos <= TEAM_SIZE && (
+                    {pos <= teamSize && (
                       <button style={s.iconBtn} onClick={e => { e.stopPropagation(); skipOneGame(p.id); }} title="Skip this game only, guaranteed back next">⏭️</button>
                     )}
                     <button style={s.iconBtn} onClick={e => { e.stopPropagation(); skipRound(p.id); }}>🪑</button>
@@ -1067,6 +1098,16 @@ export default function App() {
           })}
         </ZoneSection>
       )}
+
+      <div style={s.card}>
+        <p style={s.sectionLabel}>Join the run</p>
+        <div style={s.row}>
+          <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
+          <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
+        </div>
+      </div>
+
+      <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} />
 
       {sittingOut.length > 0 && (
         <ZoneSection title={"Sitting out - " + sittingOut.length} accent="#FF9500">
@@ -1118,16 +1159,6 @@ export default function App() {
           ))}
         </ZoneSection>
       )}
-
-      <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} />
-
-      <div style={s.card}>
-        <p style={s.sectionLabel}>Join the run</p>
-        <div style={s.row}>
-          <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
-          <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
-        </div>
-      </div>
     </div>
   );
 }
@@ -1164,6 +1195,9 @@ const s = {
   countNum: { fontSize: 34, fontWeight: 800, color: "#007AFF", letterSpacing: "-0.02em" },
   countLabel: { color: "#8E8E93", fontWeight: 400 },
   teamsTag: { marginLeft: 8, fontSize: 12, fontWeight: 600, background: "#EBF4FF", color: "#007AFF", borderRadius: 8, padding: "3px 9px" },
+  formatBtn: { flex: 1, background: "#F2F2F7", border: "none", borderRadius: 12, color: "#8E8E93", fontSize: 16, fontWeight: 700, padding: "14px 8px", cursor: "pointer" },
+  formatBtnActive: { background: "#007AFF", color: "#fff" },
+  formatLockedHint: { fontSize: 12, color: "#8E8E93", margin: "8px 0 0", textAlign: "center" },
   playerRow: { display: "flex", alignItems: "center", padding: "10px 0", borderBottom: "1px solid #F2F2F7" },
   playerNum: { fontSize: 12, color: "#8E8E93", width: 24, fontWeight: 600 },
   playerName: { flex: 1, fontSize: 16, fontWeight: 500, color: "#1C1C1E" },
@@ -1230,6 +1264,9 @@ const s = {
   hint: { fontSize: 12, fontWeight: 400, color: "#8E8E93" },
   chipGrid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 },
   chip: { display: "flex", alignItems: "center", gap: 10, background: "#F7F7F9", border: "none", borderRadius: 12, padding: "9px 10px", cursor: "pointer", textAlign: "left", minWidth: 0 },
+  chipDone: { background: "#F7F7F9", cursor: "default", opacity: 0.45 },
+  chipAvatarDone: { background: "#E5E5EA", color: "#8E8E93" },
+  chipNameDone: { color: "#8E8E93", textDecoration: "line-through" },
   chipAvatar: { width: 32, height: 32, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, flexShrink: 0 },
   chipName: { fontSize: 13.5, fontWeight: 600, color: "#1C1C1E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   summaryLogo: { width: 64, height: "auto", margin: "0 auto 4px", display: "block" },
