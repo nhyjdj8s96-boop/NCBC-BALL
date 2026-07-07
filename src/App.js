@@ -6,6 +6,7 @@ const ADMIN_TIMEOUT = 10 * 60 * 1000;
 const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
 const TIMER_DURATION = 8 * 60;
 const STORAGE_KEY = "nextgame_v1";
+const ROSTER_STORAGE_KEY = "nextgame_roster_v1";
 const VIEWS = { SETUP: "setup", GAME: "game" };
 const ZONES = { TEAM_A: "teamA", TEAM_B: "teamB", QUEUE: "queue", SITTING: "sitting", INJURED: "injured", LEFT: "left" };
 const ZONE_LABELS = { teamA: "Home", teamB: "Away", queue: "Queue", sitting: "Sitting Out", injured: "Injured", left: "Left" };
@@ -16,7 +17,7 @@ const NCBC_LOGO = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAZgAAAIYCAYAAAB
 const KNOWN_PLAYERS = [
   "Alex Chiew", "Brandon Lee", "Brian Ho", "Brianna Chun", "Chris Demas",
   "Daniel Kim", "Donny Hua", "Freddy Bongiorno", "Gabe Halle", "Jeff Park",
-  "John Kim", "Josh Aurdos", "Josh Kim", "Josh Wong", "Josue George",
+  "Jerrail Barnes", "John Kim", "Josh Aurdos", "Josh Kim", "Josh Wong", "Josue George",
   "Luke Li", "Mark Nagrampa", "Matt Kim", "Melvin George", "Nathan Samara",
   "Pastor Jacob Halle", "Pastor James Choi", "Sam Livermore", "Sharif Wilson",
 ];
@@ -25,7 +26,7 @@ let _uid = 1;
 const uid = () => _uid++;
 
 function initPlayer(name, joinOrder) {
-  return { id: uid(), name, joinOrder, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false };
+  return { id: uid(), name, joinOrder, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: false };
 }
 
 function sortQueue(players) {
@@ -56,6 +57,10 @@ function pickNextTeam(pool, teamSize) {
 
 function loadSaved() {
   try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
+}
+
+function loadRoster() {
+  try { const r = localStorage.getItem(ROSTER_STORAGE_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
 }
 
 // Roster chip helpers — initials + a stable color per name
@@ -138,13 +143,13 @@ function ConfirmModal({ moveConfirm, setMoveConfirm }) {
   );
 }
 
-function SetupChips({ setupPlayers, addPlayer }) {
+function SetupChips({ setupPlayers, addPlayer, fullRoster }) {
   const added = new Set(setupPlayers.map(p => p.name.toLowerCase()));
   const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
   // Full roster, sorted once — position never changes as people sign up.
   // Signed-up players grey out with a checkmark instead of disappearing,
   // so nothing reshuffles and your eye never loses its place.
-  const all = [...KNOWN_PLAYERS].sort((a, b) => firstName(a).localeCompare(firstName(b)));
+  const all = [...fullRoster].sort((a, b) => firstName(a).localeCompare(firstName(b)));
   return (
     <div style={s.card}>
       <p style={s.sectionLabel}>Tap your name to sign up</p>
@@ -165,14 +170,14 @@ function SetupChips({ setupPlayers, addPlayer }) {
   );
 }
 
-function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer }) {
+function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer, fullRoster }) {
   const allActive = [...teamA, ...teamB, ...queue, ...sittingOut, ...left];
   const added = new Set(allActive.map(p => p.name.toLowerCase()));
   const sk = n => {
     const parts = n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/);
     return parts.length > 1 ? parts[parts.length - 1] + " " + parts.slice(0, -1).join(" ") : parts[0];
   };
-  const all = [...KNOWN_PLAYERS].sort((a, b) => sk(a).localeCompare(sk(b)));
+  const all = [...fullRoster].sort((a, b) => sk(a).localeCompare(sk(b)));
   const anyAvailable = all.some(n => !added.has(n.toLowerCase()));
   if (!anyAvailable) return null;
   return (
@@ -273,6 +278,8 @@ export default function App() {
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
   const [dupeWarning, setDupeWarning] = useState(null);
+  const [customRoster, setCustomRoster] = useState(() => loadRoster());
+  const [regularCheck, setRegularCheck] = useState(null); // name pending "add to roster?" prompt
   const [swapPicker, setSwapPicker] = useState(null); // { playerId, isTeamA }
 
   // Haptic feedback — works on supported mobile browsers, silently ignored elsewhere
@@ -307,6 +314,14 @@ export default function App() {
   useEffect(() => {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history })); } catch {}
   }, [view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
+
+  // Custom roster persists separately from session data — surviving "Clear
+  // session" and "End session" since it's about the community, not one night.
+  useEffect(() => {
+    try { localStorage.setItem(ROSTER_STORAGE_KEY, JSON.stringify(customRoster)); } catch {}
+  }, [customRoster]);
+
+  const fullRoster = [...KNOWN_PLAYERS, ...customRoster];
 
   // timer
   const [timerSeconds, setTimerSeconds] = useState(TIMER_DURATION);
@@ -396,20 +411,52 @@ export default function App() {
   // players
   const capitalize = n => n.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
 
+  // Manual sign-up now asks Member vs Guest before actually adding anyone —
+  // members get remembered on the roster for next time, guests don't.
+  const [pendingSignup, setPendingSignup] = useState(null); // raw name typed, awaiting member/guest choice
+
+  const commitAdd = (name, isGuest) => {
+    const pool = view === VIEWS.SETUP ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
+    if (pool.some(p => p.name.toLowerCase() === name.toLowerCase())) { setDupeWarning(name); setPendingSignup(null); return; }
+    const jc = joinCounter + 1; setJoinCounter(jc);
+    const p = { ...initPlayer(name, jc), isGuest };
+    if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]);
+    else setQueue(prev => sortQueue([...prev, p]));
+    setNameInput(""); setPendingSignup(null);
+    if (!isGuest) {
+      const onRoster = fullRoster.some(n => n.toLowerCase() === name.toLowerCase());
+      if (!onRoster) setRegularCheck(name);
+    }
+  };
+
   const addPlayer = useCallback(raw => {
     if (!raw.trim()) return;
     const name = capitalize(raw);
-    const pool = view === VIEWS.SETUP ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
-    if (pool.some(p => p.name.toLowerCase() === name.toLowerCase())) { setDupeWarning(name); return; }
-    const jc = joinCounter + 1; setJoinCounter(jc);
-    const p = initPlayer(name, jc);
-    if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]);
-    else setQueue(prev => sortQueue([...prev, p]));
-    setNameInput("");
-  }, [joinCounter, view, setupPlayers, teamA, teamB, queue, sittingOut, left]);
+    // Tapping an existing roster chip is always a known member — skip the
+    // member/guest prompt entirely, they're already on the list.
+    const onRoster = fullRoster.some(n => n.toLowerCase() === name.toLowerCase());
+    if (onRoster) {
+      const pool = view === VIEWS.SETUP ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
+      if (pool.some(p => p.name.toLowerCase() === name.toLowerCase())) { setDupeWarning(name); return; }
+      const jc = joinCounter + 1; setJoinCounter(jc);
+      const p = { ...initPlayer(name, jc), isGuest: false };
+      if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]);
+      else setQueue(prev => sortQueue([...prev, p]));
+      setNameInput("");
+      return;
+    }
+    // Genuinely new name typed manually — ask Member or Guest first.
+    setPendingSignup(name);
+  }, [joinCounter, view, setupPlayers, teamA, teamB, queue, sittingOut, injured, left, fullRoster]);
 
-  const forceAdd = name => { const jc = joinCounter + 1; setJoinCounter(jc); const p = initPlayer(name, jc); if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]); else setQueue(prev => sortQueue([...prev, p])); setNameInput(""); setDupeWarning(null); };
-  const removeSetup = withAdmin(id => setSetupPlayers(prev => prev.filter(p => p.id !== id)));
+  const addToRoster = name => { setCustomRoster(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]); setRegularCheck(null); };
+
+  const forceAdd = name => {
+    const jc = joinCounter + 1; setJoinCounter(jc); const p = initPlayer(name, jc);
+    if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]); else setQueue(prev => sortQueue([...prev, p]));
+    setNameInput(""); setDupeWarning(null);
+  };
+  const removeSetup = id => setSetupPlayers(prev => prev.filter(p => p.id !== id));
 
   const startSession = () => {
     if (setupPlayers.length < teamSize * 2) return;
@@ -436,24 +483,44 @@ export default function App() {
     const everyone = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
     const sorted = [...everyone].sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
     const totalGames = gameCount - 1;
-    const mostGames = sorted.length > 0 ? sorted[0] : null;
-    const mostWins = [...everyone].sort((a, b) => (b.wins || 0) - (a.wins || 0))[0] || null;
+
+    // Helper: find every player tied for the max of a given metric, not just
+    // the first one — ties should all be listed, not arbitrarily picked.
+    const leaders = (list, metricFn) => {
+      if (list.length === 0) return [];
+      const max = Math.max(...list.map(metricFn));
+      if (max <= 0) return [];
+      return list.filter(p => metricFn(p) === max);
+    };
+
+    const mostGames = leaders(everyone, p => p.gamesPlayed || 0);
+    const mostWins = leaders(everyone, p => p.wins || 0);
+    const mostLosses = leaders(everyone, p => (p.gamesPlayed || 0) - (p.wins || 0));
+
     // Win%/loss% leaders only count players with at least 2 games, so one
     // lucky or unlucky game doesn't dominate the award.
     const eligible = everyone.filter(p => (p.gamesPlayed || 0) >= 2);
-    const bestWinPct = eligible.length > 0
-      ? [...eligible].sort((a, b) => (b.wins || 0) / b.gamesPlayed - (a.wins || 0) / a.gamesPlayed)[0]
-      : null;
-    const worstLossPct = eligible.length > 0
-      ? [...eligible].sort((a, b) => ((b.gamesPlayed - (b.wins || 0)) / b.gamesPlayed) - ((a.gamesPlayed - (a.wins || 0)) / a.gamesPlayed))[0]
-      : null;
+    const bestWinPct = leaders(eligible, p => (p.wins || 0) / p.gamesPlayed);
+    const worstWinPct = eligible.length > 0
+      ? (() => {
+          const min = Math.min(...eligible.map(p => (p.wins || 0) / p.gamesPlayed));
+          return eligible.filter(p => (p.wins || 0) / p.gamesPlayed === min);
+        })()
+      : [];
+
+    // Guests — anyone explicitly marked as a guest at sign-up (chip taps are
+    // always members; typed-in names are asked directly)
+    const guests = everyone.filter(p => p.isGuest);
+
     setSessionSummary({
       totalGames,
       players: sorted,
       mostGames,
       mostWins,
+      mostLosses,
       bestWinPct,
-      worstLossPct,
+      worstWinPct,
+      guests,
       playerCount: everyone.length,
     });
     setEndSessionConfirm(false);
@@ -586,8 +653,10 @@ export default function App() {
     if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id)); }
     else { setSittingOut(prev => prev.filter(x => x.id !== inc.id)); }
     // NOTE: no aging of others and no gamesPlayed charge — the game hasn't
-    // happened yet, this is just a pre-tip roster adjustment.
-    setSittingOut(prev => [...prev, { ...stepping, hasPlayed: true }]);
+    // happened yet, this is just a pre-tip roster adjustment. They sit out
+    // exactly this one game and are guaranteed back for the game after —
+    // this game hasn't been played yet, so the target is gameCount (not +1).
+    setSittingOut(prev => [...prev, { ...stepping, hasPlayed: true, skipUntilGame: gameCount }]);
     if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false }]);
     else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false }]);
     buzz(20);
@@ -641,8 +710,16 @@ export default function App() {
     const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
     const loserAged = loserUpd.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
     const soAged = streakOut.map(p => ({ ...p, winStreak: 0, roundsWaited: 0, hasPlayed: true, streakedOut: true }));
-    // Sitting Out and Injured stay in their sections, just accumulating wait
-    const pool = sortQueue([...agedQ, ...loserAged]);
+    // Guaranteed one-game-break subs: figure out who's due back BEFORE
+    // picking the new team, so they're actually eligible to be placed on
+    // the court this game — not just queued up for the game after.
+    const nextGameNumber = gameCount + 1;
+    const readyToReturn = sittingOut.filter(p => p.skipUntilGame && p.skipUntilGame <= nextGameNumber);
+    const stillSitting = sittingOut.filter(p => !(p.skipUntilGame && p.skipUntilGame <= nextGameNumber));
+    const maxWaitSoFar = Math.max(...agedQ.map(p => p.roundsWaited), ...loserAged.map(p => p.roundsWaited), 0);
+    const returning = readyToReturn.map(p => ({ ...p, roundsWaited: maxWaitSoFar + 1, skipUntilGame: undefined }));
+    // Sitting Out and Injured otherwise stay in their sections, just accumulating wait
+    const pool = sortQueue([...agedQ, ...loserAged, ...returning]);
     const { nextTeam: challenger, bench: nq } = pickNextTeam(pool, teamSize);
     let fillers = [], bench2 = nq;
     if (streakOut.length > 0) { const { nextTeam: fill, bench: af } = pickNextTeam(nq, teamSize); fillers = fill.slice(0, streakOut.length).map(p => ({ ...p, roundsWaited: 0, streakedOut: false })); bench2 = [...af, ...fill.slice(streakOut.length)]; }
@@ -650,14 +727,7 @@ export default function App() {
     const finalQ = sortQueue([...bench2, ...soAged]);
     if (winnerIsA) { setTeamA(winTeam); setTeamB(challenger.map(p => ({ ...p, roundsWaited: 0, streakedOut: false }))); }
     else { setTeamB(winTeam); setTeamA(challenger.map(p => ({ ...p, roundsWaited: 0, streakedOut: false }))); }
-    const nextGameNumber = gameCount + 1;
-    const readyToReturn = sittingOut.filter(p => p.skipUntilGame && p.skipUntilGame <= nextGameNumber);
-    const stillSitting = sittingOut.filter(p => !(p.skipUntilGame && p.skipUntilGame <= nextGameNumber));
-    // Guaranteed front-of-line return: give them the highest roundsWaited in
-    // the pool so sortQueue puts them at #1 regardless of anyone else's wait.
-    const maxWaitInFinalQ = finalQ.length > 0 ? Math.max(...finalQ.map(p => p.roundsWaited), 0) : 0;
-    const returning = readyToReturn.map(p => ({ ...p, roundsWaited: maxWaitInFinalQ + 1, skipUntilGame: undefined }));
-    setQueue(sortQueue([...finalQ, ...returning]));
+    setQueue(finalQ);
     setSittingOut(stillSitting.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     setAnimKey(k => k + 1); setLastWinner(winnerIsA ? "A" : "B");
@@ -698,6 +768,27 @@ export default function App() {
             </div>
           </div>
         )}
+        {regularCheck && (
+          <div style={s.overlay} onClick={() => setRegularCheck(null)}>
+            <div style={s.modal} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>Welcome, {regularCheck}!</p>
+              <p style={s.modalDesc}>Are you a regular? Add yourself to the roster so you can just tap your name next time.</p>
+              <button style={s.btnPrimary} onClick={() => addToRoster(regularCheck)}>Yes, remember me</button>
+              <button style={s.btnCancel} onClick={() => setRegularCheck(null)}>No, just this once</button>
+            </div>
+          </div>
+        )}
+        {pendingSignup && (
+          <div style={s.overlay} onClick={() => setPendingSignup(null)}>
+            <div style={s.modal} onClick={e => e.stopPropagation()}>
+              <p style={s.modalTitle}>{pendingSignup}</p>
+              <p style={s.modalDesc}>Are you an NCBC member or a guest?</p>
+              <button style={s.btnPrimary} onClick={() => commitAdd(pendingSignup, false)}>🏀 NCBC Member</button>
+              <button style={s.btnPrimary} onClick={() => commitAdd(pendingSignup, true)}>👋 Guest</button>
+              <button style={s.btnCancel} onClick={() => setPendingSignup(null)}>Cancel</button>
+            </div>
+          </div>
+        )}
         <div style={s.header}>
           <img src={NCBC_LOGO} alt="New Covenant Baptist Church" style={s.logoImg} />
           <p style={s.churchName}>NEW COVENANT<br />BAPTIST CHURCH</p>
@@ -713,23 +804,31 @@ export default function App() {
         ) : (
           <button style={s.adminUnlockBtn} onClick={() => setPinModal(true)}>🔒 Admin</button>
         )}
+        {isAdmin && customRoster.length > 0 && (
+          <div style={s.card}>
+            <p style={s.sectionLabel}>Added regulars ({customRoster.length})</p>
+            {customRoster.map(n => (
+              <div key={n} style={s.playerRow}>
+                <span style={s.playerName}>{n}</span>
+                <button style={s.removeBtn} onClick={() => setCustomRoster(prev => prev.filter(x => x !== n))}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
         <div style={s.card}>
           <p style={s.sectionLabel}>Game format</p>
           <div style={{ display: "flex", gap: 10 }}>
             <button
               style={{ ...s.formatBtn, ...(teamSize === 4 ? s.formatBtnActive : {}) }}
-              disabled={setupPlayers.length > 0}
               onClick={() => setTeamSize(4)}
             >4v4</button>
             <button
               style={{ ...s.formatBtn, ...(teamSize === 5 ? s.formatBtnActive : {}) }}
-              disabled={setupPlayers.length > 0}
               onClick={() => setTeamSize(5)}
             >5v5</button>
           </div>
-          {setupPlayers.length > 0 && <p style={s.formatLockedHint}>Clear signups to change format</p>}
         </div>
-        <SetupChips setupPlayers={setupPlayers} addPlayer={addPlayer} />
+        <SetupChips setupPlayers={setupPlayers} addPlayer={addPlayer} fullRoster={fullRoster} />
         <div style={s.card}>
           <p style={s.sectionLabel}>Not on the list?</p>
           <div style={s.row}>
@@ -747,7 +846,7 @@ export default function App() {
             <div key={p.id} style={s.playerRow}>
               <span style={s.playerNum}>{i + 1}</span>
               <span style={s.playerName}>{p.name}</span>
-              {isAdmin && <button style={s.removeBtn} onClick={() => removeSetup(p.id)}>✕</button>}
+              <button style={s.removeBtn} onClick={() => removeSetup(p.id)}>✕</button>
             </div>
           ))}
           {setupPlayers.length === 0 && <p style={s.warn}>No one signed up yet</p>}
@@ -778,6 +877,7 @@ export default function App() {
         <div style={s.overlay} onClick={() => setSubModal(null)}>
           <div style={s.modal} onClick={e => e.stopPropagation()}>
             <p style={s.modalTitle}>Sub out {subbing ? subbing.name : ""}</p>
+            <p style={s.modalDesc}>Game is in progress — this counts as a real sub</p>
 
             {subNext ? (
               <div style={s.subIncomingCard}>
@@ -860,20 +960,23 @@ export default function App() {
           <div style={s.modal} onClick={e => e.stopPropagation()}>
             <p style={s.modalTitle}>{pam.player.name}</p>
             <p style={s.modalDesc}>{pam.isTeamA ? "Home" : "Away"} - {pam.player.gamesPlayed || 0}GP{(pam.player.winStreak || 0) > 0 ? " - " + pam.player.winStreak + " win streak" : ""}</p>
-            <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSubModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
-              Sub out <span style={s.hint}>{pamNext ? pamNext.name + " comes in" : "nobody waiting"}</span>
-            </button>
+
             <button style={s.btnPrimary} onClick={() => {
               setPlayerActionModal(null);
               if (!pamNext) { setMoveConfirm({ title: "No one to sub in", desc: "Add players to the queue first.", actions: [] }); return; }
               setMoveConfirm({
-                title: pam.player.name + " needs one more game of rest?",
-                desc: pamNext.name + " takes the spot. Game hasn't started, so " + pam.player.name + " keeps full priority for the next game.",
-                actions: [{ label: "Yes, keep their priority", style: "primary", fn: () => preGameSitOut(pam.player.id, pam.isTeamA) }],
+                title: pam.player.name + " sitting before this game even starts?",
+                desc: pamNext.name + " takes the spot. " + pam.player.name + " sits out just this one game and is guaranteed back on the court next game — no games/streak impact at all.",
+                actions: [{ label: "Yes, swap before tip-off", style: "primary", fn: () => preGameSitOut(pam.player.id, pam.isTeamA) }],
               });
             }}>
-              Not ready yet <span style={s.hint}>keeps priority - game hasn't started</span>
+              🕐 Not ready yet <span style={s.hint}>sits ONE game only - guaranteed back next</span>
             </button>
+
+            <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSubModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
+              🔄 Sub out (mid-game) <span style={s.hint}>{pamNext ? pamNext.name + " comes in now" : "nobody waiting"} - game is already in progress</span>
+            </button>
+
             <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSwapPicker({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
               Swap teams <span style={s.hint}>trade with someone on {pam.isTeamA ? "Away" : "Home"}</span>
             </button>
@@ -950,17 +1053,23 @@ export default function App() {
                 <span style={s.summaryStatLabel}>ballers</span>
               </div>
             </div>
-            {sessionSummary.mostGames && (
-              <p style={s.summaryHighlight}>🏆 Most games played: <b>{sessionSummary.mostGames.name}</b> ({sessionSummary.mostGames.gamesPlayed || 0})</p>
+            {sessionSummary.mostGames.length > 0 && (
+              <p style={s.summaryHighlight}>🏆 Most games: <b>{sessionSummary.mostGames.map(p => p.name).join(", ")}</b> — <b>{sessionSummary.mostGames[0].gamesPlayed || 0}</b> games</p>
             )}
-            {sessionSummary.mostWins && (sessionSummary.mostWins.wins || 0) > 0 && (
-              <p style={s.summaryHighlight}>🥇 Most games won: <b>{sessionSummary.mostWins.name}</b> ({sessionSummary.mostWins.wins || 0})</p>
+            {sessionSummary.mostWins.length > 0 && (
+              <p style={s.summaryHighlight}>🥇 Most wins: <b>{sessionSummary.mostWins.map(p => p.name).join(", ")}</b> ({sessionSummary.mostWins[0].wins || 0})</p>
             )}
-            {sessionSummary.bestWinPct && (
-              <p style={s.summaryHighlight}>🎯 Best win%: <b>{sessionSummary.bestWinPct.name}</b> ({Math.round(((sessionSummary.bestWinPct.wins || 0) / sessionSummary.bestWinPct.gamesPlayed) * 100)}%)</p>
+            {sessionSummary.mostLosses.length > 0 && (
+              <p style={s.summaryHighlight}>😬 Most losses: <b>{sessionSummary.mostLosses.map(p => p.name).join(", ")}</b> ({(sessionSummary.mostLosses[0].gamesPlayed || 0) - (sessionSummary.mostLosses[0].wins || 0)})</p>
             )}
-            {sessionSummary.worstLossPct && (
-              <p style={s.summaryHighlight}>💀 Worst loss%: <b>{sessionSummary.worstLossPct.name}</b> ({Math.round(((sessionSummary.worstLossPct.gamesPlayed - (sessionSummary.worstLossPct.wins || 0)) / sessionSummary.worstLossPct.gamesPlayed) * 100)}%)</p>
+            {sessionSummary.bestWinPct.length > 0 && (
+              <p style={s.summaryHighlight}>🎯 Best record: <b>{sessionSummary.bestWinPct.map(p => p.name).join(", ")}</b> ({sessionSummary.bestWinPct[0].wins || 0}-{(sessionSummary.bestWinPct[0].gamesPlayed || 0) - (sessionSummary.bestWinPct[0].wins || 0)})</p>
+            )}
+            {sessionSummary.worstWinPct.length > 0 && (
+              <p style={s.summaryHighlight}>💀 Worst record: <b>{sessionSummary.worstWinPct.map(p => p.name).join(", ")}</b> ({sessionSummary.worstWinPct[0].wins || 0}-{(sessionSummary.worstWinPct[0].gamesPlayed || 0) - (sessionSummary.worstWinPct[0].wins || 0)})</p>
+            )}
+            {sessionSummary.guests.length > 0 && (
+              <p style={s.summaryHighlight}>👋 Guests: <b>{sessionSummary.guests.map(p => p.name).join(", ")}</b></p>
             )}
             <div style={s.summaryList}>
               {sessionSummary.players.map((p, i) => (
@@ -972,6 +1081,7 @@ export default function App() {
               ))}
             </div>
             <button style={{ ...s.primaryBtn, width: "100%", margin: "8px 0 0" }} onClick={finishEndSession}>Done — clear session</button>
+            <button style={s.btnCancel} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
           </div>
         </div>
       )}
@@ -983,6 +1093,29 @@ export default function App() {
             <p style={s.modalDesc}>{dupeWarning} is already in the session. Different person?</p>
             <button style={s.btnPrimary} onClick={() => forceAdd(dupeWarning)}>Add anyway</button>
             <button style={s.btnCancel} onClick={() => setDupeWarning(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
+      {regularCheck && (
+        <div style={s.overlay} onClick={() => setRegularCheck(null)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <p style={s.modalTitle}>Welcome, {regularCheck}!</p>
+            <p style={s.modalDesc}>Are you a regular? Add yourself to the roster so you can just tap your name next time.</p>
+            <button style={s.btnPrimary} onClick={() => addToRoster(regularCheck)}>Yes, remember me</button>
+            <button style={s.btnCancel} onClick={() => setRegularCheck(null)}>No, just this once</button>
+          </div>
+        </div>
+      )}
+
+      {pendingSignup && (
+        <div style={s.overlay} onClick={() => setPendingSignup(null)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <p style={s.modalTitle}>{pendingSignup}</p>
+            <p style={s.modalDesc}>Are you an NCBC member or a guest?</p>
+            <button style={s.btnPrimary} onClick={() => commitAdd(pendingSignup, false)}>🏀 NCBC Member</button>
+            <button style={s.btnPrimary} onClick={() => commitAdd(pendingSignup, true)}>👋 Guest</button>
+            <button style={s.btnCancel} onClick={() => setPendingSignup(null)}>Cancel</button>
           </div>
         </div>
       )}
@@ -1082,7 +1215,7 @@ export default function App() {
               <PlayerRow key={p.id} player={p} pos={pos}
                 heatBg={positionHeat(pos, teamSize).background}
                 meta={posLabel + (parts.length ? " - " + parts.join(" - ") : "")}
-                badge={p.streakedOut ? <span style={s.badgeStreaked}>won 2 straight</span> : null}
+                badge={<>{p.isGuest && <span style={s.badgeGuest}>guest</span>}{p.streakedOut && <span style={s.badgeStreaked}>won 2 straight</span>}</>}
                 actions={isAdmin && (
                   <div style={{ display: "flex", gap: 6 }}>
                     {pos <= teamSize && (
@@ -1107,7 +1240,7 @@ export default function App() {
         </div>
       </div>
 
-      <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} />
+      <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
 
       {sittingOut.length > 0 && (
         <ZoneSection title={"Sitting out - " + sittingOut.length} accent="#FF9500">
@@ -1244,6 +1377,7 @@ const s = {
   qName: { fontSize: 15, fontWeight: 500, color: "#1C1C1E", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   qMeta: { fontSize: 12, color: "#8E8E93", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" },
   badgeStreaked: { fontSize: 11, fontWeight: 600, background: "#FFF4E6", color: "#FF9500", borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0 },
+  badgeGuest: { fontSize: 11, fontWeight: 600, background: "#EBF4FF", color: "#007AFF", borderRadius: 6, padding: "2px 7px", whiteSpace: "nowrap", flexShrink: 0 },
   iconBtn: { background: "#F2F2F7", border: "none", borderRadius: 9, color: "#48484A", fontSize: 14, fontWeight: 600, padding: "8px 12px", cursor: "pointer", flexShrink: 0, minHeight: 36, minWidth: 36 },
   iconBtnRed: { background: "#FFEBEA", border: "none", borderRadius: 9, color: "#FF3B30", fontSize: 16, fontWeight: 700, padding: "8px 12px", cursor: "pointer", flexShrink: 0, minHeight: 36, minWidth: 36 },
   rejoinBtn: { background: "#E8F5E9", border: "none", borderRadius: 9, color: "#34C759", fontSize: 14, fontWeight: 700, padding: "8px 14px", cursor: "pointer", flexShrink: 0, minHeight: 36 },
