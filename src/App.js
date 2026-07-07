@@ -260,6 +260,12 @@ export default function App() {
   const [firestoreReady, setFirestoreReady] = useState(false);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  // View-only mode: a separate toggle from admin unlock. When on, sign-up
+  // and win-recording are hidden entirely (not just disabled) — this device
+  // becomes a pure live display. Admin controls (subs, swaps, etc.) stay
+  // gated by isAdmin exactly as before; viewOnly is an extra restriction
+  // layered on top for the non-admin, sign-up-and-score-reporting surface.
+  const [viewOnly, setViewOnly] = useState(false);
   const [pinModal, setPinModal] = useState(false);
   const [pinInput, setPinInput] = useState("");
   const [pinError, setPinError] = useState(false);
@@ -1189,9 +1195,15 @@ export default function App() {
           <img src={NCBC_LOGO} alt="NCBC" style={s.topBarLogo} />
           <span style={s.gameLabel}>GAME {gameCount}</span>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={s.totalLabel}>{total} players</span>
-          {isAdmin ? <button style={s.lockBtn} onClick={logout}>🔒 Lock &amp; hand off</button> : <button style={s.lockBtn} onClick={() => setPinModal(true)}>🔓 Admin</button>}
+          <button
+            style={{ ...s.lockBtn, ...(viewOnly ? s.viewOnlyActiveBtn : {}) }}
+            onClick={() => { if (!viewOnly) logout(); setViewOnly(v => !v); }}
+          >
+            {viewOnly ? "👀 View only" : "👁 Go view-only"}
+          </button>
+          {!viewOnly && (isAdmin ? <button style={s.lockBtn} onClick={logout}>🔒 Lock &amp; hand off</button> : <button style={s.lockBtn} onClick={() => setPinModal(true)}>🔓 Admin</button>)}
         </div>
       </div>
 
@@ -1242,11 +1254,13 @@ export default function App() {
         </div>
       </div>
 
-      <div style={s.btnRow}>
-        <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => isAdmin ? recordResult(true) : setConfirmModal({ winnerIsA: true })}>🏆 Home Wins</button>
-        <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => isAdmin ? recordResult(false) : setConfirmModal({ winnerIsA: false })}>🏆 Away Wins</button>
-      </div>
-      {isAdmin && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
+      {!viewOnly && (
+        <div style={s.btnRow}>
+          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => isAdmin ? recordResult(true) : setConfirmModal({ winnerIsA: true })}>🏆 Home Wins</button>
+          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => isAdmin ? recordResult(false) : setConfirmModal({ winnerIsA: false })}>🏆 Away Wins</button>
+        </div>
+      )}
+      {isAdmin && !viewOnly && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
 
       <div style={{ ...s.card, ...(timerDone ? s.cardDone : timerRunning ? s.cardRunning : {}) }}>
         <div style={{ ...s.sectionHeaderFill, background: timerDone ? "#FF3B30" : "#1C1C1E" }}>
@@ -1296,15 +1310,19 @@ export default function App() {
         </ZoneSection>
       )}
 
-      <div style={s.card}>
-        <p style={s.sectionLabel}>Join the run</p>
-        <div style={s.row}>
-          <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
-          <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
-        </div>
-      </div>
+      {!viewOnly && (
+        <>
+          <div style={s.card}>
+            <p style={s.sectionLabel}>Join the run</p>
+            <div style={s.row}>
+              <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
+              <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
+            </div>
+          </div>
 
-      <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
+          <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
+        </>
+      )}
 
       {sittingOut.length > 0 && (
         <ZoneSection title={"Sitting out - " + sittingOut.length} accent="#FF9500">
@@ -1406,6 +1424,7 @@ const s = {
   adminUnlockBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: "#FFFFFF", border: "none", borderRadius: 12, color: "#8E8E93", fontSize: 14, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
   logoutBtn: { display: "block", width: "calc(100% - 32px)", margin: "8px 16px 0", background: "none", border: "none", borderRadius: 12, color: "#FF3B30", fontSize: 14, fontWeight: 500, padding: "10px", cursor: "pointer" },
   lockBtn: { background: "none", border: "none", color: "#8E8E93", fontSize: 13, padding: "3px 8px", cursor: "pointer", fontWeight: 500 },
+  viewOnlyActiveBtn: { background: "#F2F2F7", borderRadius: 8, color: "#1C1C1E", fontWeight: 700 },
   adminBanner: { margin: "8px 16px 0", background: "#F0FFF4", border: "none", borderRadius: 10, padding: "8px 10px 8px 14px", fontSize: 12, color: "#34C759", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 },
   bannerLockBtn: { background: "#FFFFFF", border: "none", borderRadius: 8, color: "#1C1C1E", fontSize: 11, fontWeight: 700, padding: "6px 10px", cursor: "pointer", flexShrink: 0 },
   adminBannerWarning: { background: "#FFF4E6", color: "#FF9500" },
