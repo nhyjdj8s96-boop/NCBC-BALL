@@ -1,12 +1,30 @@
 import { useState, useCallback, useEffect, useRef } from "react";
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCyMU7Zwz2A6gGzgUDdVHsbqzYBJrX5OYs",
+  authDomain: "ncbc-ball.firebaseapp.com",
+  projectId: "ncbc-ball",
+  storageBucket: "ncbc-ball.firebasestorage.app",
+  messagingSenderId: "142545921068",
+  appId: "1:142545921068:web:028daca236fca335d1dd89"
+};
+const firebaseApp = initializeApp(firebaseConfig);
+const db = getFirestore(firebaseApp);
+
+// Single shared document for the whole group — every admin's device reads
+// and writes here, so everyone stays in sync in real time.
+const SESSION_DOC = doc(db, "sessions", "ncbc-main");
+const ROSTER_DOC = doc(db, "sessions", "ncbc-roster");
 
 const DEFAULT_TEAM_SIZE = 5;
-const ADMIN_PIN = "1234";
+const ADMIN_PIN = "0720";
 const ADMIN_TIMEOUT = 10 * 60 * 1000;
 const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
 const TIMER_DURATION = 8 * 60;
-const STORAGE_KEY = "nextgame_v1";
-const ROSTER_STORAGE_KEY = "nextgame_roster_v1";
+// Session and roster now live in Firestore (see SESSION_DOC / ROSTER_DOC
+// above) instead of localStorage, so every admin device stays in sync.
 const VIEWS = { SETUP: "setup", GAME: "game" };
 const ZONES = { TEAM_A: "teamA", TEAM_B: "teamB", QUEUE: "queue", SITTING: "sitting", INJURED: "injured", LEFT: "left" };
 const ZONE_LABELS = { teamA: "Home", teamB: "Away", queue: "Queue", sitting: "Sitting Out", injured: "Injured", left: "Left" };
@@ -53,14 +71,6 @@ function sortQueue(players) {
 function pickNextTeam(pool, teamSize) {
   const s = sortQueue(pool);
   return { nextTeam: s.slice(0, teamSize).map(p => ({ ...p, hasPlayed: true })), bench: s.slice(teamSize) };
-}
-
-function loadSaved() {
-  try { const r = localStorage.getItem(STORAGE_KEY); return r ? JSON.parse(r) : null; } catch { return null; }
-}
-
-function loadRoster() {
-  try { const r = localStorage.getItem(ROSTER_STORAGE_KEY); return r ? JSON.parse(r) : []; } catch { return []; }
 }
 
 // Roster chip helpers — initials + a stable color per name
@@ -242,7 +252,12 @@ function CourtRow({ player, isAdmin, onTap }) {
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const saved = loadSaved();
+  // Firestore loads are asynchronous (unlike the old localStorage), so we
+  // start with defaults and a "not yet loaded" flag. The flag prevents us
+  // from writing these defaults back to Firestore before the real synced
+  // data has arrived — otherwise a second device opening the app could
+  // briefly stomp on an already-running session.
+  const [firestoreReady, setFirestoreReady] = useState(false);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [pinModal, setPinModal] = useState(false);
@@ -253,21 +268,21 @@ export default function App() {
   const lastActivityRef = useRef(Date.now());
   const [adminCountdown, setAdminCountdown] = useState(null);
 
-  const [view, setView] = useState(saved?.view ?? VIEWS.SETUP);
-  const [teamSize, setTeamSize] = useState(saved?.teamSize ?? DEFAULT_TEAM_SIZE);
+  const [view, setView] = useState(VIEWS.SETUP);
+  const [teamSize, setTeamSize] = useState(DEFAULT_TEAM_SIZE);
   const [nameInput, setNameInput] = useState("");
-  const [setupPlayers, setSetupPlayers] = useState(saved?.setupPlayers ?? []);
-  const [joinCounter, setJoinCounter] = useState(saved?.joinCounter ?? 0);
+  const [setupPlayers, setSetupPlayers] = useState([]);
+  const [joinCounter, setJoinCounter] = useState(0);
 
-  const [teamA, setTeamA] = useState(saved?.teamA ?? []);
-  const [teamB, setTeamB] = useState(saved?.teamB ?? []);
-  const [queue, setQueue] = useState(saved?.queue ?? []);
-  const [sittingOut, setSittingOut] = useState(saved?.sittingOut ?? []);
-  const [injured, setInjured] = useState(saved?.injured ?? []);
-  const [left, setLeft] = useState(saved?.left ?? []);
-  const [gameCount, setGameCount] = useState(saved?.gameCount ?? 1);
-  const [lastResult, setLastResult] = useState(saved?.lastResult ?? null);
-  const [history, setHistory] = useState(saved?.history ?? []);
+  const [teamA, setTeamA] = useState([]);
+  const [teamB, setTeamB] = useState([]);
+  const [queue, setQueue] = useState([]);
+  const [sittingOut, setSittingOut] = useState([]);
+  const [injured, setInjured] = useState([]);
+  const [left, setLeft] = useState([]);
+  const [gameCount, setGameCount] = useState(1);
+  const [lastResult, setLastResult] = useState(null);
+  const [history, setHistory] = useState([]);
 
   const [subModal, setSubModal] = useState(null);
   const [subPickerModal, setSubPickerModal] = useState(null);
@@ -278,7 +293,8 @@ export default function App() {
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
   const [dupeWarning, setDupeWarning] = useState(null);
-  const [customRoster, setCustomRoster] = useState(() => loadRoster());
+  const [customRoster, setCustomRoster] = useState([]);
+  const [rosterReady, setRosterReady] = useState(false);
   const [regularCheck, setRegularCheck] = useState(null); // name pending "add to roster?" prompt
   const [swapPicker, setSwapPicker] = useState(null); // { playerId, isTeamA }
 
@@ -310,16 +326,55 @@ export default function App() {
     };
   }, [view]);
 
-  // persist
+  // Live sync: subscribe to the shared session document. Every admin's
+  // device gets pushed the latest state the instant anyone else changes it.
   useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history })); } catch {}
-  }, [view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
+    const unsub = onSnapshot(SESSION_DOC, snap => {
+      const d = snap.data();
+      if (d) {
+        setView(d.view ?? VIEWS.SETUP);
+        setTeamSize(d.teamSize ?? DEFAULT_TEAM_SIZE);
+        setSetupPlayers(d.setupPlayers ?? []);
+        setJoinCounter(d.joinCounter ?? 0);
+        setTeamA(d.teamA ?? []);
+        setTeamB(d.teamB ?? []);
+        setQueue(d.queue ?? []);
+        setSittingOut(d.sittingOut ?? []);
+        setInjured(d.injured ?? []);
+        setLeft(d.left ?? []);
+        setGameCount(d.gameCount ?? 1);
+        setLastResult(d.lastResult ?? null);
+        setHistory(d.history ?? []);
+      }
+      setFirestoreReady(true);
+    }, err => { console.error("Session sync error:", err); setFirestoreReady(true); });
+    return () => unsub();
+  }, []);
+
+  // Write local changes up to Firestore — but only after the initial load
+  // has completed, so we never clobber real cloud data with the empty
+  // defaults this component briefly starts with.
+  useEffect(() => {
+    if (!firestoreReady) return;
+    setDoc(SESSION_DOC, { view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history }).catch(err => console.error("Session write error:", err));
+  }, [firestoreReady, view, teamSize, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
 
   // Custom roster persists separately from session data — surviving "Clear
   // session" and "End session" since it's about the community, not one night.
+  // Same live-sync pattern as the session document above.
   useEffect(() => {
-    try { localStorage.setItem(ROSTER_STORAGE_KEY, JSON.stringify(customRoster)); } catch {}
-  }, [customRoster]);
+    const unsub = onSnapshot(ROSTER_DOC, snap => {
+      const d = snap.data();
+      setCustomRoster(d?.names ?? []);
+      setRosterReady(true);
+    }, err => { console.error("Roster sync error:", err); setRosterReady(true); });
+    return () => unsub();
+  }, []);
+
+  useEffect(() => {
+    if (!rosterReady) return;
+    setDoc(ROSTER_DOC, { names: customRoster }).catch(err => console.error("Roster write error:", err));
+  }, [rosterReady, customRoster]);
 
   const fullRoster = [...KNOWN_PLAYERS, ...customRoster];
 
@@ -534,7 +589,6 @@ export default function App() {
     setSetupPlayers([]); setJoinCounter(0); setNameInput("");
     setSubModal(null); setLastWinner(null); setConfirmModal(null); setMoveConfirm(null);
     setTimerSeconds(TIMER_DURATION); setTimerRunning(false); setTimerDone(false);
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
     setSessionSummary(null);
     setView(VIEWS.SETUP); logout();
   };
@@ -742,6 +796,16 @@ export default function App() {
 
   const loadTest = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return initPlayer(n, jc); })); setJoinCounter(jc); });
   const loadTest24 = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin","Isaiah","Darius","Trey","Brandon","Malik","Devon","Quincy","Jalen","Aaron","Elijah","Cody","Rashad"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return initPlayer(n, jc); })); setJoinCounter(jc); });
+
+  // ── LOADING ───────────────────────────────────────────────────────────────
+  if (!firestoreReady || !rosterReady) {
+    return (
+      <div style={{ ...s.root, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
+        <img src={NCBC_LOGO} alt="NCBC" style={{ width: 64, height: "auto", marginBottom: 16, opacity: 0.6 }} />
+        <p style={{ color: "#8E8E93", fontSize: 14 }}>Syncing with the group...</p>
+      </div>
+    );
+  }
 
   // ── SETUP VIEW ────────────────────────────────────────────────────────────
   if (view === VIEWS.SETUP) {
