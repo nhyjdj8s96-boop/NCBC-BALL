@@ -1554,6 +1554,11 @@ export default function App() {
                     {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
                   </button>
                 )}
+                {!isAdmin && (
+                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); setPinModal(true); }}>
+                    🔓 Switch to Admin
+                  </button>
+                )}
               </div>
             </>
           )}
