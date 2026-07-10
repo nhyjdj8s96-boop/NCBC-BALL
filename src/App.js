@@ -416,6 +416,14 @@ export default function App() {
   // data has arrived — otherwise a second device opening the app could
   // briefly stomp on an already-running session.
   const [firestoreReady, setFirestoreReady] = useState(false);
+  // Timer sync state declared early since the Firestore read/write effects
+  // below reference these directly (not just via setter closures) — they
+  // must exist before those effects run, or this hits the temporal dead
+  // zone the same way any other out-of-order const would.
+  const [timerRunning, setTimerRunning] = useState(false);
+  const [timerDone, setTimerDone] = useState(false);
+  const [endTime, setEndTime] = useState(null);
+  const [pausedSecondsLeft, setPausedSecondsLeft] = useState(TIMER_DURATION);
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [pinModal, setPinModal] = useState(false);
@@ -520,6 +528,10 @@ export default function App() {
           setGameCount(d.gameCount ?? 1);
           setLastResult(d.lastResult ?? null);
           setHistory(d.history ?? []);
+          setTimerRunning(d.timerRunning ?? false);
+          setTimerDone(d.timerDone ?? false);
+          setEndTime(d.endTime ?? null);
+          setPausedSecondsLeft(d.pausedSecondsLeft ?? TIMER_DURATION);
         }
         setFirestoreReady(true);
       }, err => { console.error("Session sync error:", err); setFirestoreReady(true); });
@@ -532,8 +544,8 @@ export default function App() {
   // defaults this component briefly starts with.
   useEffect(() => {
     if (!firestoreReady) return;
-    setDoc(getSessionDoc(), { view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history }).catch(err => console.error("Session write error:", err));
-  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history]);
+    setDoc(getSessionDoc(), { view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft }).catch(err => console.error("Session write error:", err));
+  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft]);
 
   // Custom roster persists separately from session data — surviving "Clear
   // session" and "End session" since it's about the community, not one night.
@@ -560,19 +572,19 @@ export default function App() {
   const fullRoster = [...KNOWN_PLAYERS, ...customRoster];
 
   // timer
-  const [timerSeconds, setTimerSeconds] = useState(TIMER_DURATION);
-  const [timerRunning, setTimerRunning] = useState(false);
-  const [timerDone, setTimerDone] = useState(false);
+  // Timer state is now genuinely shared across devices. `endTime` (a real
+  // Date.now()-based timestamp) and `timerRunning`/`timerDone` sync through
+  // Firestore like everything else — but `timerSeconds` (what's actually
+  // displayed) stays a local per-device value, recomputed every second by
+  // comparing THIS device's clock against the shared `endTime`. That split
+  // avoids writing to Firestore every single second (which would be slow
+  // and wasteful) while still making the timer genuinely live everywhere:
+  // any device can start/pause/adjust it, and every other device's display
+  // catches up within about a second.
+  const [timerSeconds, setTimerSeconds] = useState(TIMER_DURATION); // local display only, derived every tick
   const lastMinRef = useRef(null);
   const timerRef = useRef(null);
   const audioRef = useRef(null);
-  // Wall-clock anchor: the real Date.now() timestamp at which the timer
-  // should hit zero. Ticks recompute remaining time FROM this timestamp
-  // rather than decrementing a counter — so if the phone locks and the
-  // browser throttles or skips setInterval ticks entirely (common on iOS
-  // when backgrounded), the timer self-corrects to the true elapsed time
-  // the instant it fires again, instead of silently running behind.
-  const endTimeRef = useRef(null);
 
   const ensureAudio = () => {
     if (!audioRef.current) audioRef.current = new (window.AudioContext || window.webkitAudioContext)();
@@ -599,51 +611,66 @@ export default function App() {
     } catch {}
   };
 
+  // Every device runs this same effect independently — it just reads the
+  // SHARED endTime and recomputes what this device's clock says the
+  // remaining time is. Two phones will show times within ~1s of each
+  // other, same as any real synced countdown.
   useEffect(() => {
-    if (!timerRunning) return;
-    timerRef.current = setInterval(() => {
-      const remaining = Math.max(0, Math.round((endTimeRef.current - Date.now()) / 1000));
-      setTimerSeconds(prevDisplayed => {
-        if (remaining <= 0) {
-          clearInterval(timerRef.current);
-          setTimeout(() => { setTimerRunning(false); setTimerDone(true); buzzer(); buzz([200, 100, 200, 100, 400]); setTimeout(() => speak("That's game!"), 1200); }, 0);
-          return 0;
-        }
-        // Announcements still fire off the recomputed remaining value, so
-        // a throttled tab that jumps several seconds at once doesn't just
-        // silently skip past an announcement — it announces off wherever
-        // the true remaining time actually landed.
-        if (remaining % 60 === 0 && remaining > 0 && lastMinRef.current !== remaining / 60) {
-          lastMinRef.current = remaining / 60;
-          speak(remaining / 60 === 1 ? "One minute left!" : (remaining / 60) + " minutes left.");
-        }
-        if (ANNOUNCE_SECONDS.has(remaining)) speak(remaining <= 10 ? String(remaining) : remaining + " seconds!");
-        return remaining;
-      });
-    }, 1000);
+    if (!timerRunning || !endTime) return;
+    const tick = () => {
+      const remaining = Math.max(0, Math.round((endTime - Date.now()) / 1000));
+      setTimerSeconds(remaining);
+      if (remaining <= 0) {
+        clearInterval(timerRef.current);
+        setTimerRunning(false); setTimerDone(true); setPausedSecondsLeft(0);
+        buzzer(); buzz([200, 100, 200, 100, 400]); setTimeout(() => speak("That's game!"), 1200);
+        return;
+      }
+      if (remaining % 60 === 0 && remaining > 0 && lastMinRef.current !== remaining / 60) {
+        lastMinRef.current = remaining / 60;
+        speak(remaining / 60 === 1 ? "One minute left!" : (remaining / 60) + " minutes left.");
+      }
+      if (ANNOUNCE_SECONDS.has(remaining)) speak(remaining <= 10 ? String(remaining) : remaining + " seconds!");
+    };
+    tick();
+    timerRef.current = setInterval(tick, 1000);
     return () => clearInterval(timerRef.current);
-  }, [timerRunning]);
+  }, [timerRunning, endTime]);
+
+  // While not running, the display just shows whatever the shared paused
+  // value is — kept in sync so every device agrees on the frozen number.
+  useEffect(() => {
+    if (!timerRunning) setTimerSeconds(pausedSecondsLeft);
+  }, [timerRunning, pausedSecondsLeft]);
 
   const startTimer = () => {
     ensureAudio(); lastMinRef.current = null; setTimerDone(false);
-    // Anchor the end time from whatever timerSeconds currently shows —
-    // covers both a fresh start and resuming after a pause correctly.
-    endTimeRef.current = Date.now() + timerSeconds * 1000;
+    const secondsToRun = timerDone ? pausedSecondsLeft : (pausedSecondsLeft || TIMER_DURATION);
+    setEndTime(Date.now() + secondsToRun * 1000);
     setTimerRunning(true);
-    const m = Math.floor(timerSeconds / 60), sc = timerSeconds % 60;
+    const m = Math.floor(secondsToRun / 60), sc = secondsToRun % 60;
     speak((sc === 0 ? m + " minute" + (m === 1 ? "" : "s") : m + " minutes and " + sc + " seconds") + " on the clock!");
   };
-  const pauseTimer = () => { setTimerRunning(false); };
-  const resetTimer = () => { clearInterval(timerRef.current); setTimerRunning(false); setTimerDone(false); setTimerSeconds(TIMER_DURATION); endTimeRef.current = null; lastMinRef.current = null; window.speechSynthesis?.cancel(); };
-  // Manual +/- adjustments must move BOTH the displayed seconds AND the
-  // wall-clock end-time anchor together — otherwise the next tick would
-  // recompute from the old anchor and silently undo the adjustment.
+  const pauseTimer = () => {
+    if (endTime) setPausedSecondsLeft(Math.max(0, Math.round((endTime - Date.now()) / 1000)));
+    setTimerRunning(false);
+  };
+  const resetTimer = () => {
+    clearInterval(timerRef.current); setTimerRunning(false); setTimerDone(false);
+    setEndTime(null); setPausedSecondsLeft(TIMER_DURATION); setTimerSeconds(TIMER_DURATION);
+    lastMinRef.current = null; window.speechSynthesis?.cancel();
+  };
+  // Manual +/- adjustments move whichever value is currently authoritative:
+  // the shared end-time if running, or the shared paused value if not —
+  // either way every device picks up the change within the next tick.
   const adjustTimer = delta => {
-    setTimerSeconds(prev => {
-      const next = Math.max(1, prev + delta);
-      if (timerRunning && endTimeRef.current) endTimeRef.current += delta * 1000;
-      return next;
-    });
+    if (timerRunning && endTime) {
+      const newEnd = endTime + delta * 1000;
+      setEndTime(newEnd);
+      setTimerSeconds(Math.max(1, Math.round((newEnd - Date.now()) / 1000)));
+    } else {
+      setPausedSecondsLeft(prev => Math.max(1, prev + delta));
+    }
   };
   const timerDisplay = () => { const m = Math.floor(timerSeconds / 60), sc = timerSeconds % 60; return m + ":" + String(sc).padStart(2, "0"); };
 
