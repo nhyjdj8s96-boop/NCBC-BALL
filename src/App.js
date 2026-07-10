@@ -1037,6 +1037,9 @@ export default function App() {
     else if (streakOut.length > 0) setLastResult({ winner: hw + " stays on - " + streakOut.length + " streak player(s) rotate out", loser: lw + " sits" });
     else setLastResult({ winner: hw + " stays on", loser: lw + " sits" });
     setGameCount(g => g + 1);
+    // A fresh game means a fresh clock — reset back to the full game length
+    // automatically rather than making someone remember to tap Reset.
+    resetTimer();
   };
 
   const loadTest = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return { ...initPlayer(n, jc), isGuest: true }; })); setJoinCounter(jc); });
@@ -1614,12 +1617,12 @@ export default function App() {
             {timerDone && <span style={s.timerDoneLabel}>GAME OVER</span>}
           </div>
           <div style={s.timerBtnRow}>
-            <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>
-            <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>
+            {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
+            {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
             {timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>{timerDone ? "OT" : "▶"}</button>}
-            <button style={s.timerBtnReset} onClick={resetTimer}>■</button>
-            <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>
-            <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>
+            {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
+            {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
+            {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
           </div>
           <p style={s.timerHint}>Announces at every minute - buzzer at 0:00</p>
         </div>
