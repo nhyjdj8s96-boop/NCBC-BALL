@@ -481,6 +481,7 @@ export default function App() {
   const [animKey, setAnimKey] = useState(0);
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
+  const [winConfirm, setWinConfirm] = useState(null); // true = Home won, false = Away won, null = closed
   const [dupeWarning, setDupeWarning] = useState(null);
   const [customRoster, setCustomRoster] = useState([]);
   const [rosterReady, setRosterReady] = useState(false);
@@ -1456,6 +1457,19 @@ export default function App() {
         </div>
       )}
 
+      {winConfirm !== null && (
+        <div style={s.overlay} onClick={() => setWinConfirm(null)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <div style={s.modalGrabber} />
+            <p style={s.modalTitle}>{winConfirm ? "🏆 Home Wins?" : "🏆 Away Wins?"}</p>
+            <p style={s.modalDesc}>Confirm the winning team before it's recorded:</p>
+            <p style={s.modalDesc}><b>{winConfirm ? "Home: " : "Away: "}{(winConfirm ? teamA : teamB).map(p => p.name).join(", ")}</b></p>
+            <button style={s.btnPrimary} onClick={() => { recordResult(winConfirm); setWinConfirm(null); }}>Yes, this team won</button>
+            <button style={s.btnCancel} onClick={() => setWinConfirm(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {sessionSummary && (
         <div style={s.overlay}>
           <div style={{ ...s.modal, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
@@ -1624,8 +1638,8 @@ export default function App() {
 
       {(isAdmin || assistantMode) && (
         <div style={s.btnRow}>
-          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => recordResult(true)}>🏆 Home Wins</button>
-          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => recordResult(false)}>🏆 Away Wins</button>
+          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => { if (assistantMode && !isAdmin) setWinConfirm(true); else recordResult(true); }}>🏆 Home Wins</button>
+          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => { if (assistantMode && !isAdmin) setWinConfirm(false); else recordResult(false); }}>🏆 Away Wins</button>
         </div>
       )}
       {isAdmin && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
