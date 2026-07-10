@@ -441,6 +441,7 @@ export default function App() {
   const [pinModal, setPinModal] = useState(false);
   const [pinMode, setPinMode] = useState("admin"); // "admin" | "assistant"
   const [settingsMenu, setSettingsMenu] = useState(false);
+  const [modeMenu, setModeMenu] = useState(false);
   // Tracks what the person was trying to do when the PIN prompt fired, so a
   // successful unlock can pick up right where they left off (e.g. tapping
   // "Run It" pre-admin should actually start the session once unlocked,
@@ -1557,22 +1558,31 @@ export default function App() {
                 <button style={s.settingsPopoverItem} onClick={() => { setDarkMode(d => !d); setSettingsMenu(false); }}>
                   {darkMode ? "☀️ Light mode" : "🌙 Dark mode"}
                 </button>
-                {!isAdmin && (
-                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); if (assistantMode) setAssistantMode(false); else { setPinMode("assistant"); setPinModal(true); } }}>
-                    {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
-                  </button>
-                )}
-                {!isAdmin && (
-                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); setPinMode("admin"); setPinModal(true); }}>
-                    🔓 Switch to Admin
-                  </button>
-                )}
               </div>
             </>
           )}
-          {isAdmin
-            ? <button style={s.lockBtn} onClick={logout}>🔓 Admin</button>
-            : <button style={s.lockBtn} onClick={() => { setPinMode("admin"); setPinModal(true); }}>{assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}</button>}
+          {isAdmin ? (
+            <button style={s.lockBtn} onClick={logout}>🔓 Admin</button>
+          ) : (
+            <div style={{ position: "relative" }}>
+              <button style={s.lockBtn} onClick={() => setModeMenu(v => !v)}>
+                {assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}
+              </button>
+              {modeMenu && (
+                <>
+                  <div style={s.settingsPopoverBackdrop} onClick={() => setModeMenu(false)} />
+                  <div style={s.settingsPopover} onClick={e => e.stopPropagation()}>
+                    <button style={s.settingsPopoverItem} onClick={() => { setModeMenu(false); if (assistantMode) setAssistantMode(false); else { setPinMode("assistant"); setPinModal(true); } }}>
+                      {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
+                    </button>
+                    <button style={s.settingsPopoverItem} onClick={() => { setModeMenu(false); setPinMode("admin"); setPinModal(true); }}>
+                      🔓 Switch to Admin
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
