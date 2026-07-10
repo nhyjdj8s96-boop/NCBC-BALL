@@ -1649,7 +1649,7 @@ export default function App() {
             <div style={s.timerBtnRow}>
               {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
               {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
-              {timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>▶</button>}
+              {!timerDone && (timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>▶</button>)}
               {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
               {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
               {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
