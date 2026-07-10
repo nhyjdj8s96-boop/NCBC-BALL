@@ -70,6 +70,7 @@ function getRosterDoc() { if (!_rosterDocCache || _rosterDocCache._firebaseState
 
 const DEFAULT_TEAM_SIZE = 5;
 const ADMIN_PIN = "0720";
+const ASSISTANT_PIN = "8611";
 const ADMIN_TIMEOUT = 10 * 60 * 1000;
 const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
 const TIMER_DURATION = 8 * 60;
@@ -238,13 +239,15 @@ function positionHeat(pos, teamSize) {
 
 // ── TOP-LEVEL COMPONENTS ──────────────────────────────────────────────────────
 
-function PinModal({ pinInput, pinError, setPinModal, setPinInput, setPinError, setIsAdmin }) {
+function PinModal({ pinInput, pinError, setPinModal, setPinInput, setPinError, setIsAdmin, setAssistantMode, mode }) {
   const close = () => { setPinModal(false); setPinInput(""); setPinError(false); };
+  const targetPin = mode === "assistant" ? ASSISTANT_PIN : ADMIN_PIN;
+  const title = mode === "assistant" ? "Assistant PIN" : "Admin PIN";
   return (
     <div style={s.overlay} onClick={close}>
       <div style={s.modal} onClick={e => e.stopPropagation()}>
             <div style={s.modalGrabber} />
-        <p style={s.modalTitle}>Admin PIN</p>
+        <p style={s.modalTitle}>{title}</p>
         <div style={s.pinDots}>
           {[0,1,2,3].map(i => <div key={i} style={{ ...s.pinDot, ...(pinInput.length > i ? s.pinDotFilled : {}) }} />)}
         </div>
@@ -257,7 +260,10 @@ function PinModal({ pinInput, pinError, setPinModal, setPinInput, setPinError, s
               if (pinInput.length < 4) {
                 const next = pinInput + k; setPinInput(next); setPinError(false);
                 if (next.length === 4) setTimeout(() => {
-                  if (next === ADMIN_PIN) { setIsAdmin(true); setPinModal(false); setPinInput(""); }
+                  if (next === targetPin) {
+                    if (mode === "assistant") setAssistantMode(true); else setIsAdmin(true);
+                    setPinModal(false); setPinInput("");
+                  }
                   else { setPinError(true); setPinInput(""); }
                 }, 100);
               }
@@ -433,6 +439,7 @@ export default function App() {
   // the real management actions isAdmin already correctly gates.
   const [assistantMode, setAssistantMode] = useState(false);
   const [pinModal, setPinModal] = useState(false);
+  const [pinMode, setPinMode] = useState("admin"); // "admin" | "assistant"
   const [settingsMenu, setSettingsMenu] = useState(false);
   // Tracks what the person was trying to do when the PIN prompt fired, so a
   // successful unlock can pick up right where they left off (e.g. tapping
@@ -474,7 +481,6 @@ export default function App() {
   const [animKey, setAnimKey] = useState(0);
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
-  const [assistantModeConfirm, setAssistantModeConfirm] = useState(false);
   const [dupeWarning, setDupeWarning] = useState(null);
   const [customRoster, setCustomRoster] = useState([]);
   const [rosterReady, setRosterReady] = useState(false);
@@ -1066,7 +1072,7 @@ export default function App() {
   if (view === VIEWS.SETUP) {
     return (
       <div style={s.root}>
-        {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} />}
+        {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} setAssistantMode={setAssistantMode} mode={pinMode} />}
         {endSessionConfirm && (
           <div style={s.overlay} onClick={() => setEndSessionConfirm(false)}>
             <div style={s.modal} onClick={e => e.stopPropagation()}>
@@ -1115,7 +1121,7 @@ export default function App() {
             <button style={s.logoutBtn} onClick={logout}>Lock admin</button>
           </div>
         ) : (
-          <button style={s.adminUnlockBtn} onClick={() => setPinModal(true)}>🔒 Admin</button>
+          <button style={s.adminUnlockBtn} onClick={() => { setPinMode("admin"); setPinModal(true); }}>🔒 Admin</button>
         )}
         {isAdmin && customRoster.length > 0 && (
           <div style={s.card}>
@@ -1192,7 +1198,7 @@ export default function App() {
             </div>
           )}
         </div>
-        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < teamSize * 2 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < teamSize * 2} onClick={() => { if (isAdmin) startSession(); else { setPinIntent("startSession"); setPinModal(true); } }}>
+        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < teamSize * 2 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < teamSize * 2} onClick={() => { if (isAdmin) startSession(); else { setPinIntent("startSession"); setPinMode("admin"); setPinModal(true); } }}>
           {setupPlayers.length >= teamSize * 2 ? (isAdmin ? "Run It 🏀" : "🔒 Run It 🏀") : "Need " + (teamSize * 2 - setupPlayers.length) + " more to start"}
         </button>
       </div>
@@ -1225,7 +1231,7 @@ export default function App() {
 
   return (
     <div style={s.root}>
-      {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} />}
+      {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} setAssistantMode={setAssistantMode} mode={pinMode} />}
       <ConfirmModal moveConfirm={moveConfirm} setMoveConfirm={setMoveConfirm} />
 
       {subModal && isAdmin && !subPickerModal && (
@@ -1450,18 +1456,6 @@ export default function App() {
         </div>
       )}
 
-      {assistantModeConfirm && (
-        <div style={s.overlay} onClick={() => setAssistantModeConfirm(false)}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <div style={s.modalGrabber} />
-            <p style={s.modalTitle}>🧑‍🔧 Enter Assistant Mode?</p>
-            <p style={s.modalDesc}>You'll be able to start and pause the game timer. Everything else stays view-only.</p>
-            <button style={s.btnPrimary} onClick={() => { setAssistantMode(true); setAssistantModeConfirm(false); }}>Yes, enter Assistant Mode</button>
-            <button style={s.btnCancel} onClick={() => setAssistantModeConfirm(false)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
       {sessionSummary && (
         <div style={s.overlay}>
           <div style={{ ...s.modal, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
@@ -1550,12 +1544,12 @@ export default function App() {
                   {darkMode ? "☀️ Light mode" : "🌙 Dark mode"}
                 </button>
                 {!isAdmin && (
-                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); if (assistantMode) setAssistantMode(false); else setAssistantModeConfirm(true); }}>
+                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); if (assistantMode) setAssistantMode(false); else { setPinMode("assistant"); setPinModal(true); } }}>
                     {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
                   </button>
                 )}
                 {!isAdmin && (
-                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); setPinModal(true); }}>
+                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); setPinMode("admin"); setPinModal(true); }}>
                     🔓 Switch to Admin
                   </button>
                 )}
@@ -1564,7 +1558,7 @@ export default function App() {
           )}
           {isAdmin
             ? <button style={s.lockBtn} onClick={logout}>🔓 Admin</button>
-            : <button style={s.lockBtn} onClick={() => setPinModal(true)}>{assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}</button>}
+            : <button style={s.lockBtn} onClick={() => { setPinMode("admin"); setPinModal(true); }}>{assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}</button>}
         </div>
       </div>
 
@@ -1628,7 +1622,7 @@ export default function App() {
         </div>
       </div>
 
-      {isAdmin && (
+      {(isAdmin || assistantMode) && (
         <div style={s.btnRow}>
           <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => recordResult(true)}>🏆 Home Wins</button>
           <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => recordResult(false)}>🏆 Away Wins</button>
@@ -1647,12 +1641,12 @@ export default function App() {
           </div>
           {(assistantMode || isAdmin) && (
             <div style={s.timerBtnRow}>
-              {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
-              {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
+              <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>
+              <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>
               {!timerDone && (timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>▶</button>)}
-              {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
-              {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
-              {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
+              <button style={s.timerBtnReset} onClick={resetTimer}>■</button>
+              <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>
+              <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>
             </div>
           )}
           <p style={s.timerHint}>Announces at every minute - buzzer at 0:00</p>
@@ -1689,7 +1683,7 @@ export default function App() {
         </ZoneSection>
       )}
 
-      {isAdmin && (
+      {(isAdmin || assistantMode) && (
         <>
           <div style={s.card}>
             <p style={s.sectionLabel}>Join the run</p>
