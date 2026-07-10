@@ -426,6 +426,12 @@ export default function App() {
   const [pausedSecondsLeft, setPausedSecondsLeft] = useState(TIMER_DURATION);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  // Three total access tiers: Player (default, pure view-only), Assistant
+  // (adds timer play/pause only), Admin (full control, unlocked via PIN).
+  // Assistant is intentionally a separate, lighter flag rather than folded
+  // into isAdmin — it should never unlock subs, swaps, results, or any of
+  // the real management actions isAdmin already correctly gates.
+  const [assistantMode, setAssistantMode] = useState(false);
   const [pinModal, setPinModal] = useState(false);
   const [settingsMenu, setSettingsMenu] = useState(false);
   // Tracks what the person was trying to do when the PIN prompt fired, so a
@@ -468,6 +474,7 @@ export default function App() {
   const [animKey, setAnimKey] = useState(0);
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
+  const [assistantModeConfirm, setAssistantModeConfirm] = useState(false);
   const [dupeWarning, setDupeWarning] = useState(null);
   const [customRoster, setCustomRoster] = useState([]);
   const [rosterReady, setRosterReady] = useState(false);
@@ -1443,6 +1450,18 @@ export default function App() {
         </div>
       )}
 
+      {assistantModeConfirm && (
+        <div style={s.overlay} onClick={() => setAssistantModeConfirm(false)}>
+          <div style={s.modal} onClick={e => e.stopPropagation()}>
+            <div style={s.modalGrabber} />
+            <p style={s.modalTitle}>🧑‍🔧 Enter Assistant Mode?</p>
+            <p style={s.modalDesc}>You'll be able to start and pause the game timer. Everything else stays view-only.</p>
+            <button style={s.btnPrimary} onClick={() => { setAssistantMode(true); setAssistantModeConfirm(false); }}>Yes, enter Assistant Mode</button>
+            <button style={s.btnCancel} onClick={() => setAssistantModeConfirm(false)}>Cancel</button>
+          </div>
+        </div>
+      )}
+
       {sessionSummary && (
         <div style={s.overlay}>
           <div style={{ ...s.modal, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
@@ -1530,12 +1549,17 @@ export default function App() {
                 <button style={s.settingsPopoverItem} onClick={() => { setDarkMode(d => !d); setSettingsMenu(false); }}>
                   {darkMode ? "☀️ Light mode" : "🌙 Dark mode"}
                 </button>
+                {!isAdmin && (
+                  <button style={s.settingsPopoverItem} onClick={() => { setSettingsMenu(false); if (assistantMode) setAssistantMode(false); else setAssistantModeConfirm(true); }}>
+                    {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
+                  </button>
+                )}
               </div>
             </>
           )}
           {isAdmin
             ? <button style={s.lockBtn} onClick={logout}>🔓 Admin</button>
-            : <button style={s.lockBtn} onClick={() => setPinModal(true)}>👀 View only</button>}
+            : <button style={s.lockBtn} onClick={() => setPinModal(true)}>{assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}</button>}
         </div>
       </div>
 
@@ -1619,7 +1643,11 @@ export default function App() {
           <div style={s.timerBtnRow}>
             {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
             {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
-            {timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>{timerDone ? "OT" : "▶"}</button>}
+            {(assistantMode || isAdmin) ? (
+              timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>{timerDone ? "OT" : "▶"}</button>
+            ) : (
+              <button style={s.timerBtnStart} disabled>{timerDone ? "OT" : (timerRunning ? "⏸" : "▶")}</button>
+            )}
             {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
             {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
             {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
