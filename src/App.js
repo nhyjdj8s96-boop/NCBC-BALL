@@ -1645,18 +1645,16 @@ export default function App() {
             <span style={{ ...s.timerTime, color: timerDone ? "#FF3B30" : timerSeconds <= 60 ? "#FF9500" : "#007AFF" }}>{timerDisplay()}</span>
             {timerDone && <span style={s.timerDoneLabel}>GAME OVER</span>}
           </div>
-          <div style={s.timerBtnRow}>
-            {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
-            {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
-            {(assistantMode || isAdmin) ? (
-              timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>{timerDone ? "OT" : "▶"}</button>
-            ) : (
-              <button style={s.timerBtnStart} disabled>{timerDone ? "OT" : (timerRunning ? "⏸" : "▶")}</button>
-            )}
-            {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
-            {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
-            {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
-          </div>
+          {(assistantMode || isAdmin) && (
+            <div style={s.timerBtnRow}>
+              {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>}
+              {isAdmin && <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>}
+              {timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>{timerDone ? "OT" : "▶"}</button>}
+              {isAdmin && <button style={s.timerBtnReset} onClick={resetTimer}>■</button>}
+              {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>}
+              {isAdmin && <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>}
+            </div>
+          )}
           <p style={s.timerHint}>Announces at every minute - buzzer at 0:00</p>
         </div>
       </div>
