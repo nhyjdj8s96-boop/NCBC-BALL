@@ -41,12 +41,24 @@ const firebaseConfig = {
 
 // Kicked off immediately; resolves fast on a real deploy, fails fast (and
 // silently) in an environment without the firebase package.
+//
+// CRITICAL: offline persistence is enabled here via initializeFirestore's
+// localCache option. Without this, a dropped connection mid-game (very
+// realistic in a gym) would leave onSnapshot's error callback firing and
+// the app falling back to empty default state — making it LOOK like the
+// whole game was lost even though nothing actually was. With persistence
+// on, Firestore caches everything in IndexedDB: the app keeps reading its
+// last-known state AND queues up writes locally, then syncs automatically
+// the instant connectivity returns. No user-facing "offline mode" needed —
+// it's just resilient by default.
 const _firebaseReadyPromise = (async () => {
   try {
     const { initializeApp } = await import("firebase/app");
-    const { getFirestore, doc, setDoc, onSnapshot } = await import("firebase/firestore");
+    const { initializeFirestore, persistentLocalCache, persistentSingleTabManager, doc, setDoc, onSnapshot } = await import("firebase/firestore");
     const app = initializeApp(firebaseConfig);
-    _fsdb = getFirestore(app);
+    _fsdb = initializeFirestore(app, {
+      localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }),
+    });
     _fsdoc = doc; _fssetDoc = setDoc; _fsonSnapshot = onSnapshot;
     _usingFirebase = true;
   } catch {
@@ -67,6 +79,8 @@ function onSnapshot(ref, cb) { return _usingFirebase ? _fsonSnapshot(ref, cb) : 
 let _sessionDocCache = null, _rosterDocCache = null;
 function getSessionDoc() { if (!_sessionDocCache || _sessionDocCache._firebaseState !== _usingFirebase) { _sessionDocCache = doc(null, "sessions", "ncbc-main"); _sessionDocCache._firebaseState = _usingFirebase; } return _sessionDocCache; }
 function getRosterDoc() { if (!_rosterDocCache || _rosterDocCache._firebaseState !== _usingFirebase) { _rosterDocCache = doc(null, "sessions", "ncbc-roster"); _rosterDocCache._firebaseState = _usingFirebase; } return _rosterDocCache; }
+let _attendanceDocCache = null;
+function getAttendanceDoc() { if (!_attendanceDocCache || _attendanceDocCache._firebaseState !== _usingFirebase) { _attendanceDocCache = doc(null, "sessions", "ncbc-attendance"); _attendanceDocCache._firebaseState = _usingFirebase; } return _attendanceDocCache; }
 
 const DEFAULT_TEAM_SIZE = 5;
 const ADMIN_PIN = "0720";
@@ -387,6 +401,87 @@ function ZoneSection({ title, children, accent }) {
   );
 }
 
+function AttendanceScreen({ attendanceLog, onBack }) {
+  const [search, setSearch] = useState("");
+  const q = search.trim().toLowerCase();
+
+  const formatDate = iso => {
+    const [y, m, d] = iso.split("-").map(Number);
+    return new Date(y, m - 1, d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  };
+
+  // Older entries recorded before guest/member tracking only have a flat
+  // `names` array — normalize those to the new `attendees` shape (assumed
+  // member, since that's the honest default for historical data we can't
+  // retroactively know the guest status of) so the rest of this component
+  // only ever has to deal with one consistent shape.
+  const normalize = entry => entry.attendees
+    ? entry.attendees
+    : (entry.names || []).map(name => ({ name, isGuest: false }));
+
+  // Always sort by date, most recent first — enforced here at render time
+  // rather than just trusting whatever order the data was written in.
+  const sortedLog = [...attendanceLog]
+    .map(entry => ({ date: entry.date, attendees: normalize(entry) }))
+    .sort((a, b) => b.date.localeCompare(a.date));
+
+  // When searching, show every date a matching name appears, most recent
+  // first — this is the "when did Josh attend" lookup, not just a date list.
+  const filtered = q
+    ? sortedLog
+        .map(entry => ({ ...entry, attendees: entry.attendees.filter(a => a.name.toLowerCase().includes(q)) }))
+        .filter(entry => entry.attendees.length > 0)
+    : sortedLog;
+
+  return (
+    <div style={s.root}>
+      <div style={s.topBar}>
+        <button style={s.lockBtn} onClick={onBack}>← Back</button>
+        <span style={s.gameLabel}>Attendance History</span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ padding: "0 16px" }}>
+        <div style={s.card}>
+          <input
+            style={s.input}
+            placeholder="Search a name (e.g. Josh)"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+          />
+        </div>
+        {filtered.length === 0 && (
+          <div style={s.emptyState}>
+            <span style={s.emptyStateIcon}>📋</span>
+            <p style={s.emptyStateText}>{q ? "No matches found" : "No sessions recorded yet"}</p>
+            <p style={s.emptyStateSub}>{q ? "Try a different name or spelling" : "History fills in once a session ends"}</p>
+          </div>
+        )}
+        {filtered.map(entry => {
+          const members = entry.attendees.filter(a => !a.isGuest);
+          const guests = entry.attendees.filter(a => a.isGuest);
+          return (
+            <div key={entry.date} style={s.card}>
+              <p style={s.sectionLabel}>{formatDate(entry.date)} · {entry.attendees.length} {entry.attendees.length === 1 ? "person" : "people"}</p>
+              {members.length > 0 && (
+                <div style={{ marginBottom: guests.length > 0 ? 10 : 0 }}>
+                  <p style={s.attendanceGroupLabel}>🏀 Members ({members.length})</p>
+                  <p style={s.attendanceNameList}>{members.map(a => a.name).join(", ")}</p>
+                </div>
+              )}
+              {guests.length > 0 && (
+                <div>
+                  <p style={s.attendanceGroupLabel}>👋 Guests ({guests.length})</p>
+                  <p style={s.attendanceNameList}>{guests.map(a => a.name).join(", ")}</p>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function CourtRow({ player, isAdmin, onTap, isLast }) {
   return (
     <div onClick={() => { if (isAdmin) onTap(); }} className={isAdmin ? "native-row" : ""}
@@ -400,7 +495,38 @@ function CourtRow({ player, isAdmin, onTap, isLast }) {
 
 // ── MAIN APP ──────────────────────────────────────────────────────────────────
 
-export default function App() {
+// Catches any render-time crash and shows a real, recoverable message with
+// the actual error instead of a blank white screen — this is what should
+// have existed before the "screen goes white on selecting a winner" bug
+// was reported, since a boundary like this would have told us exactly
+// what threw instead of leaving us to guess from a blank page.
+class ErrorBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("App crashed:", error, info); }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 24, fontFamily: "-apple-system, sans-serif", textAlign: "center" }}>
+          <p style={{ fontSize: 40, marginBottom: 8 }}>⚠️</p>
+          <p style={{ fontSize: 17, fontWeight: 700, marginBottom: 8 }}>Something went wrong</p>
+          <p style={{ fontSize: 13, color: "#8E8E93", marginBottom: 20, maxWidth: 320 }}>
+            {String(this.state.error && this.state.error.message || this.state.error)}
+          </p>
+          <button
+            style={{ background: "#0B6E2E", color: "#fff", border: "none", borderRadius: 12, padding: "14px 24px", fontSize: 15, fontWeight: 700, cursor: "pointer" }}
+            onClick={() => window.location.reload()}
+          >
+            Reload
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+function AppInner() {
   // Dark mode — a simple, persisted, user-toggleable preference. Works the
   // same in both admin and view-only mode: it's a display preference, not
   // a permission, so it's never gated by isAdmin. COLOR is reassigned here
@@ -485,6 +611,12 @@ export default function App() {
   const [winConfirm, setWinConfirm] = useState(null); // true = Home won, false = Away won, null = closed
   const [dupeWarning, setDupeWarning] = useState(null);
   const [customRoster, setCustomRoster] = useState([]);
+  // Permanent attendance archive — one entry per night, never wiped by
+  // "Clear session" or "End session". Separate document from live session
+  // state and the roster, same sync pattern as both.
+  const [attendanceLog, setAttendanceLog] = useState([]); // [{ date: "2026-06-26", names: ["Josh Kim", ...] }, ...]
+  const [attendanceReady, setAttendanceReady] = useState(false);
+  const [attendanceView, setAttendanceView] = useState(false); // toggles the attendance browser screen
   const [rosterReady, setRosterReady] = useState(false);
   const [swapPicker, setSwapPicker] = useState(null); // { playerId, isTeamA }
 
@@ -583,6 +715,23 @@ export default function App() {
     if (!rosterReady) return;
     setDoc(getRosterDoc(), { names: customRoster }).catch(err => console.error("Roster write error:", err));
   }, [rosterReady, customRoster]);
+
+  // Attendance archive — a permanent record of who came each night, keyed
+  // by date. Never touched by "Clear session" or "End session"; only
+  // written to once, right when a session ends (see endSession below).
+  useEffect(() => {
+    let unsub = () => {};
+    let cancelled = false;
+    _firebaseReadyPromise.then(() => {
+      if (cancelled) return;
+      unsub = onSnapshot(getAttendanceDoc(), snap => {
+        const d = snap.data();
+        setAttendanceLog(d?.entries ?? []);
+        setAttendanceReady(true);
+      }, err => { console.error("Attendance sync error:", err); setAttendanceReady(true); });
+    });
+    return () => { cancelled = true; unsub(); };
+  }, []);
 
   const fullRoster = [...KNOWN_PLAYERS, ...customRoster];
 
@@ -838,6 +987,18 @@ export default function App() {
       guests,
       playerCount: everyone.length,
     });
+    // Record tonight's attendance permanently — one entry per session,
+    // keyed by date, never wiped by the summary dismissal or session clear.
+    // Each attendee keeps their guest/member status so the history view can
+    // separate the two, not just show one flat name list.
+    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    const attendees = everyone.map(p => ({ name: p.name, isGuest: !!p.isGuest }));
+    setAttendanceLog(prev => {
+      const withoutToday = prev.filter(e => e.date !== today);
+      const updated = [...withoutToday, { date: today, attendees }].sort((a, b) => b.date.localeCompare(a.date));
+      setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
+      return updated;
+    });
     setEndSessionConfirm(false);
     buzz(30);
   };
@@ -1070,6 +1231,11 @@ export default function App() {
     );
   }
 
+  // ── ATTENDANCE HISTORY ────────────────────────────────────────────────────
+  if (attendanceView) {
+    return <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} />;
+  }
+
   // ── SETUP VIEW ────────────────────────────────────────────────────────────
   if (view === VIEWS.SETUP) {
     return (
@@ -1115,6 +1281,7 @@ export default function App() {
           <h1 style={s.title}>Monday Night Ball</h1>
         </div>
         <button style={s.themeToggleBtnCentered} onClick={() => setDarkMode(d => !d)}>{darkMode ? "☀️ Light mode" : "🌙 Dark mode"}</button>
+        <button style={s.themeToggleBtnCentered} onClick={() => setAttendanceView(true)}>📋 Attendance History</button>
         {isAdmin ? (
           <div>
             <button style={s.testBtn} onClick={loadTest}>Load 12 test players</button>
@@ -1837,6 +2004,8 @@ function buildS() {
   emptyStateIcon: { fontSize: 32, marginBottom: 4, opacity: 0.5 },
   emptyStateText: { fontSize: 15, fontWeight: 600, color: COLOR.label, margin: 0 },
   emptyStateSub: { fontSize: 12, color: COLOR.secondaryLabel, margin: 0 },
+  attendanceGroupLabel: { fontSize: 11, fontWeight: 700, color: COLOR.secondaryLabel, textTransform: "uppercase", letterSpacing: "0.03em", margin: "0 0 3px" },
+  attendanceNameList: { fontSize: 14, color: COLOR.label, lineHeight: 1.6, margin: 0 },
   primaryBtn: { display: "block", width: "calc(100% - 32px)", margin: "16px 16px 0", background: "#0B6E2E", border: "none", borderRadius: RADIUS.md, color: "#fff", fontSize: 19, fontWeight: 800, padding: "18px", cursor: "pointer", boxShadow: "0 4px 14px rgba(11,110,46,0.3)" },
   primaryBtnDisabled: { background: COLOR.separator, color: COLOR.secondaryLabel, cursor: "default" },
   testBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.systemBackground, border: "none", borderRadius: RADIUS.md, color: COLOR.tint, fontSize: 15, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
@@ -1948,4 +2117,12 @@ function buildS() {
   subPickName: { flex: 1, fontSize: 15, fontWeight: 600, color: COLOR.label },
   subPickMeta: { fontSize: 12, color: COLOR.secondaryLabel, flexShrink: 0 },
   };
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
 }
