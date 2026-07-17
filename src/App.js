@@ -90,7 +90,7 @@ const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
 const TIMER_DURATION = 8 * 60;
 // Session and roster sync live via Firebase when available, falling back
 // to a same-shape localStorage layer automatically (see top of file).
-const VIEWS = { SETUP: "setup", GAME: "game" };
+const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
 const ZONES = { TEAM_A: "teamA", TEAM_B: "teamB", QUEUE: "queue", SITTING: "sitting", INJURED: "injured", LEFT: "left" };
 const ZONE_LABELS = { teamA: "Home", teamB: "Away", queue: "Queue", sitting: "Sitting Out", injured: "Injured", left: "Left" };
 const ANNOUNCE_SECONDS = new Set([60, 50, 40, 30, 20, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1]);
@@ -401,6 +401,77 @@ function ZoneSection({ title, children, accent }) {
   );
 }
 
+function CatchUpScreen({ setupPlayers, teamSize, onCancel, onStart }) {
+  // "queue" | "home" | "away" per player id — everyone starts unassigned
+  // in the queue, admin taps to move people to Home or Away to match
+  // whatever's actually happening on the court right now.
+  const [assignments, setAssignments] = useState(() => {
+    const initial = {};
+    setupPlayers.forEach(p => { initial[p.id] = "queue"; });
+    return initial;
+  });
+  const [homeStreak, setHomeStreak] = useState(0);
+  const [awayStreak, setAwayStreak] = useState(0);
+
+  const homeCount = Object.values(assignments).filter(v => v === "home").length;
+  const awayCount = Object.values(assignments).filter(v => v === "away").length;
+  const canStart = homeCount === teamSize && awayCount === teamSize;
+
+  const cycle = id => {
+    setAssignments(prev => {
+      const cur = prev[id];
+      const next = cur === "queue" ? "home" : cur === "home" ? "away" : "queue";
+      return { ...prev, [id]: next };
+    });
+  };
+
+  const labelFor = v => v === "home" ? "🟠 Home" : v === "away" ? "🔵 Away" : "⚪ Queue";
+
+  return (
+    <div style={s.root}>
+      <div style={s.topBar}>
+        <button style={s.lockBtn} onClick={onCancel}>← Cancel</button>
+        <span style={s.gameLabel}>Catch Up</span>
+        <div style={{ width: 60 }} />
+      </div>
+      <div style={{ padding: "0 16px" }}>
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Tap each name to assign them</p>
+          <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 12px" }}>
+            Match who's actually on the court right now. Tap again to cycle Queue → Home → Away.
+          </p>
+          {setupPlayers.map(p => (
+            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "0.5px solid " + COLOR.separator }}>
+              <span style={{ fontSize: 15, fontWeight: 600, color: COLOR.label }}>{p.name}</span>
+              <button style={s.catchUpAssignBtn} onClick={() => cycle(p.id)}>{labelFor(assignments[p.id])}</button>
+            </div>
+          ))}
+        </div>
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Current win streak (if either team's already hot)</p>
+          <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 4px" }}>🟠 Home ({homeCount}/{teamSize})</p>
+              <input type="number" min="0" style={s.input} value={homeStreak} onChange={e => setHomeStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 4px" }}>🔵 Away ({awayCount}/{teamSize})</p>
+              <input type="number" min="0" style={s.input} value={awayStreak} onChange={e => setAwayStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+            </div>
+          </div>
+        </div>
+        <button
+          style={{ ...s.primaryBtn, ...(canStart ? {} : s.primaryBtnDisabled) }}
+          disabled={!canStart}
+          onClick={() => onStart(assignments, homeStreak, awayStreak)}
+        >
+          {canStart ? "Start from here 🏀" : `Need exactly ${teamSize} on each team (${homeCount} Home, ${awayCount} Away)`}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function AttendanceScreen({ attendanceLog, onBack }) {
   const [search, setSearch] = useState("");
   const q = search.trim().toLowerCase();
@@ -548,6 +619,18 @@ function AppInner() {
   // data has arrived — otherwise a second device opening the app could
   // briefly stomp on an already-running session.
   const [firestoreReady, setFirestoreReady] = useState(false);
+  // Hard safety net: no matter what Firestore does, never let the loading
+  // screen spin forever. If nothing has marked the app ready within a few
+  // seconds, force it through anyway — worst case the app runs on
+  // whatever local/cached state exists rather than hanging indefinitely.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setFirestoreReady(r => r || true);
+      setRosterReady(r => r || true);
+      setAttendanceReady(r => r || true);
+    }, 6000);
+    return () => clearTimeout(t);
+  }, []);
   // Timer sync state declared early since the Firestore read/write effects
   // below reference these directly (not just via setter closures) — they
   // must exist before those effects run, or this hits the temporal dead
@@ -1178,6 +1261,32 @@ function AppInner() {
     const ranked = [...wantsOut].sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
     const streakOut = ranked.slice(0, replaceable);
     const forcedStay = ranked.slice(replaceable);
+    // Exact-headcount deadlock: the winning team earned a rotation (hit the
+    // streak cap) but there's nobody in the queue to actually replace them
+    // with — most commonly exactly `teamSize * 2` total players and no one
+    // else waiting. Rather than silently forcing the same hot team to keep
+    // playing (which defeats the whole point of the 2-win-and-rotate rule),
+    // reshuffle all `teamSize * 2` current court players into two brand
+    // new teams and reset every streak, so the rotation rule is honored in
+    // spirit even when there's no queue to draw fresh legs from.
+    const deadlocked = gameMode !== "king" && wantsOut.length > 0 && replaceable === 0 && queue.length === 0;
+    if (deadlocked) {
+      const everyoneOnCourt = sortQueue([...winnerUpd, ...loserUpd].map(p => ({ ...p, winStreak: 0, streakedOut: false })));
+      const shuffled = [...everyoneOnCourt].sort(() => Math.random() - 0.5);
+      const newA = shuffled.slice(0, teamSize).map(p => ({ ...p, roundsWaited: 0 }));
+      const newB = shuffled.slice(teamSize).map(p => ({ ...p, roundsWaited: 0 }));
+      if (isAdmin) resetAdminTimer();
+      saveSnap();
+      buzz([40, 60, 40]);
+      setTeamA(newA); setTeamB(newB);
+      setSittingOut(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
+      setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
+      setAnimKey(k => k + 1); setLastWinner(null);
+      setLastResult({ winner: "Teams shuffled — 2 straight wins, no one waiting to sub in", loser: "" });
+      setGameCount(g => g + 1);
+      resetTimer();
+      return;
+    }
     const staying = [...notStreaking, ...forcedStay.map(p => ({ ...p, winStreak: 0 }))];
     if (isAdmin) resetAdminTimer();
     saveSnap();
@@ -1236,6 +1345,28 @@ function AppInner() {
     return <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} />;
   }
 
+  // ── CATCH UP (admin joining a game already in progress) ──────────────────
+  if (view === VIEWS.CATCHUP) {
+    return (
+      <CatchUpScreen
+        setupPlayers={setupPlayers}
+        teamSize={teamSize}
+        onCancel={() => setView(VIEWS.SETUP)}
+        onStart={(assignments, homeStreak, awayStreak) => {
+          const withRole = id => assignments[id];
+          const home = setupPlayers.filter(p => withRole(p.id) === "home").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: homeStreak, gamesPlayed: 0, wins: 0 }));
+          const away = setupPlayers.filter(p => withRole(p.id) === "away").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: awayStreak, gamesPlayed: 0, wins: 0 }));
+          const waiting = setupPlayers.filter(p => withRole(p.id) === "queue").map(p => ({ ...p, hasPlayed: true, gamesPlayed: 0, wins: 0 }));
+          setTeamA(home); setTeamB(away);
+          setQueue(sortQueue(waiting));
+          setSittingOut([]); setInjured([]); setLeft([]); setGameCount(1); setLastResult(null); setHistory([]);
+          setView(VIEWS.GAME);
+          window.scrollTo({ top: 0, behavior: "instant" });
+        }}
+      />
+    );
+  }
+
   // ── SETUP VIEW ────────────────────────────────────────────────────────────
   if (view === VIEWS.SETUP) {
     return (
@@ -1282,6 +1413,11 @@ function AppInner() {
         </div>
         <button style={s.themeToggleBtnCentered} onClick={() => setDarkMode(d => !d)}>{darkMode ? "☀️ Light mode" : "🌙 Dark mode"}</button>
         <button style={s.themeToggleBtnCentered} onClick={() => setAttendanceView(true)}>📋 Attendance History</button>
+        {isAdmin && (
+          <button style={s.catchUpBtnTop} onClick={() => setView(VIEWS.CATCHUP)}>
+            ⏱️ Catch up — game's already in progress
+          </button>
+        )}
         {isAdmin ? (
           <div>
             <button style={s.testBtn} onClick={loadTest}>Load 12 test players</button>
@@ -1389,6 +1525,8 @@ function AppInner() {
   const canSub = isAdmin && (queue.length > 0 || sittingOut.length > 0);
   const sortedQ = sortQueue(queue);
   const subbing = subModal ? [...teamA, ...teamB].find(p => p.id === subModal.playerId) : null;
+  const subPickerOutgoing = subPickerModal ? [...teamA, ...teamB].find(p => p.id === subPickerModal.playerId) : null;
+  const subPickerOutgoingName = subPickerOutgoing ? subPickerOutgoing.name : "the player";
   const subNext = getIncoming();
   const hasPool = sortQueue([...queue, ...sittingOut]).length > 0;
   const pam = playerActionModal;
@@ -1473,7 +1611,7 @@ function AppInner() {
           <div style={s.modal} onClick={e => e.stopPropagation()}>
             <div style={s.modalGrabber} />
             <p style={s.modalTitle}>{subPickerModal.chosen.name} comes in</p>
-            <p style={s.modalDesc}>Why is {subbing ? subbing.name : "the player"} coming out?</p>
+            <p style={s.modalDesc}>Why is {subPickerOutgoingName} coming out?</p>
             <div style={s.subReasonRow}>
               <button style={s.subReasonBtn} onClick={() => { subInSpecific(subPickerModal.chosen, subPickerModal.playerId, subPickerModal.isTeamA, false); setSubPickerModal(null); setSubModal(null); }}>
                 <span style={s.subReasonEmoji}>😮‍💨</span>
@@ -1509,7 +1647,15 @@ function AppInner() {
             </button>
 
             <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSubModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
-              🔄 Sub out (mid-game) <span style={s.hint}>{pamNext ? pamNext.name + " comes in now" : "nobody waiting"} - game is already in progress</span>
+              🔄 Sub out — next in queue <span style={s.hint}>{pamNext ? pamNext.name + " comes in now" : "nobody waiting"} - game is already in progress</span>
+            </button>
+
+            <button
+              style={{ ...s.btnPrimary, ...(hasPool ? {} : s.btnDisabled) }}
+              disabled={!hasPool}
+              onClick={() => { if (!hasPool) return; setPlayerActionModal(null); setSubPickerModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}
+            >
+              🎯 Sub out — pick someone <span style={s.hint}>{hasPool ? "choose exactly who comes in" : "no one else available"}</span>
             </button>
 
             <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSwapPicker({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
@@ -2007,6 +2153,9 @@ function buildS() {
   attendanceGroupLabel: { fontSize: 11, fontWeight: 700, color: COLOR.secondaryLabel, textTransform: "uppercase", letterSpacing: "0.03em", margin: "0 0 3px" },
   attendanceNameList: { fontSize: 14, color: COLOR.label, lineHeight: 1.6, margin: 0 },
   primaryBtn: { display: "block", width: "calc(100% - 32px)", margin: "16px 16px 0", background: "#0B6E2E", border: "none", borderRadius: RADIUS.md, color: "#fff", fontSize: 19, fontWeight: 800, padding: "18px", cursor: "pointer", boxShadow: "0 4px 14px rgba(11,110,46,0.3)" },
+  catchUpBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: "none", border: "none", color: COLOR.secondaryLabel, fontSize: 13, fontWeight: 600, padding: "8px", cursor: "pointer", textAlign: "center" },
+  catchUpBtnTop: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.warningSubtleBg, border: "none", borderRadius: RADIUS.sm, color: COLOR.warning, fontSize: 14, fontWeight: 700, padding: "12px", cursor: "pointer", textAlign: "center" },
+  catchUpAssignBtn: { background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.label, fontSize: 13, fontWeight: 700, padding: "8px 14px", cursor: "pointer" },
   primaryBtnDisabled: { background: COLOR.separator, color: COLOR.secondaryLabel, cursor: "default" },
   testBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.systemBackground, border: "none", borderRadius: RADIUS.md, color: COLOR.tint, fontSize: 15, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
   adminUnlockBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.systemBackground, border: "none", borderRadius: RADIUS.md, color: COLOR.secondaryLabel, fontSize: 15, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
