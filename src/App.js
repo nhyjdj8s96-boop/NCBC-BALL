@@ -185,8 +185,20 @@ const KNOWN_PLAYERS = [
   "Pastor Jacob Halle", "Pastor James Choi", "Sam Livermore", "Sharif Wilson",
 ];
 
-let _uid = 1;
-const uid = () => _uid++;
+// CRITICAL FIX: the old `let _uid = 1; const uid = () => _uid++;` was a
+// module-level counter that silently resets to 1 every time the page's
+// JavaScript reloads (reopening the app, reconnecting after being
+// offline, a different device loading the page fresh, etc.). Since the
+// live roster is shared across every device via Firestore, that reset
+// caused genuine ID collisions — a freshly-added player could get the
+// same id as someone who already existed, and since the whole app keys
+// and looks players up BY id, this produced exactly the kind of
+// duplicate-looking, misbehaving rows seen in the queue.
+//
+// Real fix: generate IDs that are unique regardless of when or where
+// they're created — a timestamp plus a random component, never reused
+// even across reloads or different devices.
+const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
 function initPlayer(name, joinOrder) {
   return { id: uid(), name, joinOrder, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: false };
