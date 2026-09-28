@@ -1196,7 +1196,15 @@ function AppInner() {
       moved = prev.find(x => x.id === id) || null;
       return prev.filter(x => x.id !== id);
     });
-    setSittingOut(prev => moved ? [...prev, { ...moved, skipUntilGame: gameCount + 1 }] : prev);
+    // gameCount + 2, not + 1. This person is in the QUEUE, so they are not
+    // playing the current game at all — the game they are giving up is the
+    // NEXT one. The release check at the end of a game asks whether
+    // skipUntilGame <= gameCount + 1, so tagging them with gameCount + 1
+    // let them straight back in for the very game they asked to skip (and
+    // with a front-of-line boost on top of it). The two on-court paths
+    // below correctly use gameCount / gameCount + 1, because those players
+    // really are missing the game in progress.
+    setSittingOut(prev => moved ? [...prev, { ...moved, skipUntilGame: gameCount + 2 }] : prev);
     buzz(20);
   });
   const rejoin = withAdmin(id => {
