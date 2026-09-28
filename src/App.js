@@ -1116,7 +1116,12 @@ function AppInner() {
     setTeamB(firstTen.slice(teamSize).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
     setQueue(sortQueue(sorted.slice(teamSize * 2).map(p => ({ ...p, hasPlayed: true }))));
     setSittingOut([]); setInjured([]); setLeft([]); setGameCount(1); setLastResult(null); setHistory([]);
-    setView(VIEWS.GAME); if (isAdmin) logout();
+    // Stay unlocked into the game. Locking here cost the admin a second PIN
+    // entry ten seconds after the first, and bought nothing: logout() drops
+    // to Player (view-only), not Assistant, so it never set up a handoff
+    // either. Handing the phone over is a deliberate switch to Assistant
+    // with its own PIN, and admin still auto-locks after ADMIN_TIMEOUT idle.
+    setView(VIEWS.GAME);
     window.scrollTo({ top: 0, behavior: "instant" });
   };
 
