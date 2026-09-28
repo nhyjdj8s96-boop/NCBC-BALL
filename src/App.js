@@ -209,7 +209,21 @@ function sortQueue(players) {
   const avg = experienced.length > 0 ? experienced.reduce((s, p) => s + (p.gamesPlayed || 0), 0) / experienced.length : 0;
   const maxWait = experienced.length > 0 ? Math.max(...experienced.map(p => p.roundsWaited)) : 0;
   const eff = (p) => p.roundsWaited + Math.min(Math.max(avg - (p.gamesPlayed || 0), 0), maxWait);
-  const seed = (p) => (p.id * 2654435761 % 2147483647) / 2147483647;
+  // Final tiebreaker: a stable, arbitrary order for players who are equal on
+  // every real measure. Player ids are strings now ("mulmgx16-891ektp"), so
+  // the old `p.id * 2654435761` produced NaN and the comparator returned NaN
+  // — which leaves sort order formally undefined rather than merely odd.
+  // Hash the text to a number first (FNV-1a, same idea as nameHue). String()
+  // also covers any player still carrying a numeric id from an old session.
+  const seed = (p) => {
+    let h = 2166136261;
+    const str = String(p.id);
+    for (let i = 0; i < str.length; i++) {
+      h ^= str.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0) / 4294967296;
+  };
   return [...players].sort((a, b) => {
     const aN = !a.hasPlayed, bN = !b.hasPlayed;
     if (aN && !bN) return -1; if (!aN && bN) return 1;
