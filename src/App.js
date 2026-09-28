@@ -750,6 +750,20 @@ function AppInner() {
     };
   }, [view]);
 
+  // Echo guards. onSnapshot sets state, and that state change triggers the
+  // write effect below — which would push the very value we just received
+  // straight back to Firestore. That round-trip is not harmless: with
+  // persistentLocalCache enabled, onSnapshot fires IMMEDIATELY from the
+  // local IndexedDB cache on load, before the server's value arrives. So a
+  // device carrying a stale cache would boot up and overwrite the real
+  // server state with whatever it remembered from last time — silently
+  // reverting another admin's roster edit, or restoring a finished game
+  // over tonight's live one. These refs mark a state change as
+  // snapshot-originated so the write effect skips it and only genuinely
+  // local edits are ever sent upstream.
+  const sessionEcho = useRef(false);
+  const rosterEcho = useRef(false);
+
   // Live sync: subscribe to the shared session document. Every admin's
   // device gets pushed the latest state the instant anyone else changes it.
   // Waits for Firebase detection to settle first so it subscribes to the
@@ -763,6 +777,7 @@ function AppInner() {
       unsub = onSnapshot(getSessionDoc(), snap => {
         const d = snap.data();
         if (d) {
+          sessionEcho.current = true;
           setView(d.view ?? VIEWS.SETUP);
           setTeamSize(d.teamSize ?? DEFAULT_TEAM_SIZE);
           setGameMode(d.gameMode ?? "rotate");
@@ -793,6 +808,7 @@ function AppInner() {
   // defaults this component briefly starts with.
   useEffect(() => {
     if (!firestoreReady) return;
+    if (sessionEcho.current) { sessionEcho.current = false; return; }
     setDoc(getSessionDoc(), { view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft }).catch(err => console.error("Session write error:", err));
   }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft]);
 
@@ -806,6 +822,7 @@ function AppInner() {
       if (cancelled) return;
       unsub = onSnapshot(getRosterDoc(), snap => {
         const d = snap.data();
+        rosterEcho.current = true;
         setCustomRoster(d?.names ?? []);
         setRosterReady(true);
       }, err => { console.error("Roster sync error:", err); setRosterReady(true); });
@@ -815,6 +832,7 @@ function AppInner() {
 
   useEffect(() => {
     if (!rosterReady) return;
+    if (rosterEcho.current) { rosterEcho.current = false; return; }
     setDoc(getRosterDoc(), { names: customRoster }).catch(err => console.error("Roster write error:", err));
   }, [rosterReady, customRoster]);
 
