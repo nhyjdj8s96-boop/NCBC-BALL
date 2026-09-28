@@ -225,6 +225,33 @@ function sortQueue(players) {
   });
 }
 
+// One canonical shape for the session document, used for BOTH the outgoing
+// write and the incoming snapshot, so the two can be compared as strings.
+// Defaults are applied identically on each side — otherwise a missing field
+// on the server would read as "different" forever and write on every render.
+function sessionPayload(d) {
+  return {
+    view: d.view ?? VIEWS.SETUP,
+    teamSize: d.teamSize ?? DEFAULT_TEAM_SIZE,
+    gameMode: d.gameMode ?? "rotate",
+    setupPlayers: d.setupPlayers ?? [],
+    joinCounter: d.joinCounter ?? 0,
+    teamA: d.teamA ?? [],
+    teamB: d.teamB ?? [],
+    queue: d.queue ?? [],
+    sittingOut: d.sittingOut ?? [],
+    injured: d.injured ?? [],
+    left: d.left ?? [],
+    gameCount: d.gameCount ?? 1,
+    lastResult: d.lastResult ?? null,
+    history: d.history ?? [],
+    timerRunning: d.timerRunning ?? false,
+    timerDone: d.timerDone ?? false,
+    endTime: d.endTime ?? null,
+    pausedSecondsLeft: d.pausedSecondsLeft ?? TIMER_DURATION,
+  };
+}
+
 function pickNextTeam(pool, teamSize) {
   const s = sortQueue(pool);
   return { nextTeam: s.slice(0, teamSize).map(p => ({ ...p, hasPlayed: true })), bench: s.slice(teamSize) };
@@ -750,19 +777,22 @@ function AppInner() {
     };
   }, [view]);
 
-  // Echo guards. onSnapshot sets state, and that state change triggers the
-  // write effect below — which would push the very value we just received
-  // straight back to Firestore. That round-trip is not harmless: with
-  // persistentLocalCache enabled, onSnapshot fires IMMEDIATELY from the
-  // local IndexedDB cache on load, before the server's value arrives. So a
-  // device carrying a stale cache would boot up and overwrite the real
-  // server state with whatever it remembered from last time — silently
-  // reverting another admin's roster edit, or restoring a finished game
-  // over tonight's live one. These refs mark a state change as
-  // snapshot-originated so the write effect skips it and only genuinely
-  // local edits are ever sent upstream.
-  const sessionEcho = useRef(false);
-  const rosterEcho = useRef(false);
+  // Echo suppression. onSnapshot sets state, and that state change triggers
+  // the write effect below — which would push the value we just received
+  // straight back. That round-trip is not harmless: persistentLocalCache
+  // makes onSnapshot fire IMMEDIATELY from IndexedDB on load, before the
+  // server's value arrives, so a device carrying a stale cache would boot
+  // and overwrite real server state with whatever it remembered.
+  //
+  // These hold the last payload the SERVER told us about, as JSON. The
+  // write effect sends an update only when local state actually differs
+  // from that. Comparing payloads rather than setting a "this was an echo"
+  // boolean matters: a snapshot carrying data identical to current state
+  // changes no dependency, so the effect never re-runs — a boolean set
+  // there would never be cleared and would swallow the NEXT real edit.
+  // A value comparison has no such stuck state.
+  const lastSyncedSession = useRef(null);
+  const lastSyncedRoster = useRef(null);
 
   // Live sync: subscribe to the shared session document. Every admin's
   // device gets pushed the latest state the instant anyone else changes it.
@@ -777,7 +807,7 @@ function AppInner() {
       unsub = onSnapshot(getSessionDoc(), snap => {
         const d = snap.data();
         if (d) {
-          sessionEcho.current = true;
+          lastSyncedSession.current = JSON.stringify(sessionPayload(d));
           setView(d.view ?? VIEWS.SETUP);
           setTeamSize(d.teamSize ?? DEFAULT_TEAM_SIZE);
           setGameMode(d.gameMode ?? "rotate");
@@ -808,8 +838,11 @@ function AppInner() {
   // defaults this component briefly starts with.
   useEffect(() => {
     if (!firestoreReady) return;
-    if (sessionEcho.current) { sessionEcho.current = false; return; }
-    setDoc(getSessionDoc(), { view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft }).catch(err => console.error("Session write error:", err));
+    const payload = sessionPayload({ view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft });
+    const json = JSON.stringify(payload);
+    if (json === lastSyncedSession.current) return;
+    lastSyncedSession.current = json;
+    setDoc(getSessionDoc(), payload).catch(err => console.error("Session write error:", err));
   }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft]);
 
   // Custom roster persists separately from session data — surviving "Clear
@@ -822,7 +855,7 @@ function AppInner() {
       if (cancelled) return;
       unsub = onSnapshot(getRosterDoc(), snap => {
         const d = snap.data();
-        rosterEcho.current = true;
+        lastSyncedRoster.current = JSON.stringify(d?.names ?? []);
         setCustomRoster(d?.names ?? []);
         setRosterReady(true);
       }, err => { console.error("Roster sync error:", err); setRosterReady(true); });
@@ -832,7 +865,9 @@ function AppInner() {
 
   useEffect(() => {
     if (!rosterReady) return;
-    if (rosterEcho.current) { rosterEcho.current = false; return; }
+    const json = JSON.stringify(customRoster);
+    if (json === lastSyncedRoster.current) return;
+    lastSyncedRoster.current = json;
     setDoc(getRosterDoc(), { names: customRoster }).catch(err => console.error("Roster write error:", err));
   }, [rosterReady, customRoster]);
 
