@@ -470,9 +470,28 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
     players.forEach(p => { initial[p.id] = (initialAssignments && initialAssignments[p.id]) || "queue"; });
     return initial;
   });
-  const [homeStreak, setHomeStreak] = useState(0);
-  const [awayStreak, setAwayStreak] = useState(0);
-  const [gameNumber, setGameNumber] = useState(initialGameNumber || 1);
+  // Held as text, not numbers. Clamping inside onChange meant an empty field
+  // was instantly rewritten to the minimum, so you could never clear it to
+  // type a new value — the box just sat on 1. Keep whatever is typed
+  // (including nothing), and only settle it when the field loses focus.
+  const [homeStreak, setHomeStreak] = useState("0");
+  const [awayStreak, setAwayStreak] = useState("0");
+  const [gameNumber, setGameNumber] = useState(String(initialGameNumber || 1));
+
+  const numField = (value, setValue, min) => ({
+    type: "text",
+    inputMode: "numeric",
+    pattern: "[0-9]*",
+    value,
+    // Select on focus AND on click: these hold one or two digits, so a tap
+    // almost always means "replace this", not "put the cursor here". Without
+    // the click handler, tapping an already-focused field appends instead.
+    onFocus: e => e.target.select(),
+    onClick: e => e.target.select(),
+    onChange: e => { const v = e.target.value; if (/^\d{0,3}$/.test(v)) setValue(v); },
+    onBlur: () => setValue(v => (v === "" ? String(min) : String(Math.max(min, parseInt(v, 10) || min)))),
+  });
+  const asNum = (v, min) => Math.max(min, parseInt(v, 10) || min);
 
   const roleOf = p => assignments[p.id] || "queue";
   const homeCount = players.filter(p => roleOf(p) === "home").length;
@@ -546,8 +565,7 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
           <div style={{ display: "flex", gap: 12, marginTop: 8, alignItems: "flex-end" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={s.catchUpFieldLabel}>Game number</p>
-              <input type="number" min="1" inputMode="numeric" style={s.input} value={gameNumber}
-                onChange={e => setGameNumber(Math.max(1, parseInt(e.target.value) || 1))} />
+              <input style={s.input} aria-label="Game number" {...numField(gameNumber, setGameNumber, 1)} />
             </div>
           </div>
           <p style={s.catchUpHelp}>If they've already played two games, this is game 3.</p>
@@ -558,13 +576,11 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
           <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={s.catchUpFieldLabel}>🟠 Home ({homeCount}/{teamSize})</p>
-              <input type="number" min="0" inputMode="numeric" style={s.input} value={homeStreak}
-                onChange={e => setHomeStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+              <input style={s.input} aria-label="Home win streak" {...numField(homeStreak, setHomeStreak, 0)} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
               <p style={s.catchUpFieldLabel}>🔵 Away ({awayCount}/{teamSize})</p>
-              <input type="number" min="0" inputMode="numeric" style={s.input} value={awayStreak}
-                onChange={e => setAwayStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+              <input style={s.input} aria-label="Away win streak" {...numField(awayStreak, setAwayStreak, 0)} />
             </div>
           </div>
         </div>
@@ -572,7 +588,7 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
         <button
           style={{ ...s.primaryBtn, ...(canStart ? {} : s.primaryBtnDisabled), width: "100%", margin: "16px 0 0" }}
           disabled={!canStart}
-          onClick={() => onStart(assignments, homeStreak, awayStreak, gameNumber)}
+          onClick={() => onStart(assignments, asNum(homeStreak, 0), asNum(awayStreak, 0), asNum(gameNumber, 1))}
         >
           {canStart ? "Start from here 🏀" : `Need ${teamSize} on each team — ${homeCount} Home, ${awayCount} Away`}
         </button>
