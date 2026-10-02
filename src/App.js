@@ -461,31 +461,33 @@ function ZoneSection({ title, children, accent }) {
   );
 }
 
-function CatchUpScreen({ setupPlayers, teamSize, onCancel, onStart }) {
-  // "queue" | "home" | "away" per player id — everyone starts unassigned
-  // in the queue, admin taps to move people to Home or Away to match
-  // whatever's actually happening on the court right now.
+function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssignments, initialGameNumber, onCancel, onStart }) {
+  // "queue" | "home" | "away" per player id. Opening this from a live game
+  // pre-fills from who is actually on the court, so the common case is
+  // "glance, correct one or two, go" rather than assigning ten people.
   const [assignments, setAssignments] = useState(() => {
     const initial = {};
-    setupPlayers.forEach(p => { initial[p.id] = "queue"; });
+    players.forEach(p => { initial[p.id] = (initialAssignments && initialAssignments[p.id]) || "queue"; });
     return initial;
   });
   const [homeStreak, setHomeStreak] = useState(0);
   const [awayStreak, setAwayStreak] = useState(0);
+  const [gameNumber, setGameNumber] = useState(initialGameNumber || 1);
 
-  const homeCount = Object.values(assignments).filter(v => v === "home").length;
-  const awayCount = Object.values(assignments).filter(v => v === "away").length;
+  const roleOf = p => assignments[p.id] || "queue";
+  const homeCount = players.filter(p => roleOf(p) === "home").length;
+  const awayCount = players.filter(p => roleOf(p) === "away").length;
   const canStart = homeCount === teamSize && awayCount === teamSize;
 
-  const cycle = id => {
-    setAssignments(prev => {
-      const cur = prev[id];
-      const next = cur === "queue" ? "home" : cur === "home" ? "away" : "queue";
-      return { ...prev, [id]: next };
-    });
-  };
+  // Three-way toggle. Tapping the same role again clears back to Queue, so a
+  // mis-tap is one tap to undo instead of a lap through the whole cycle.
+  const setRole = (id, role) => setAssignments(prev => ({ ...prev, [id]: prev[id] === role ? "queue" : role }));
 
-  const labelFor = v => v === "home" ? "🟠 Home" : v === "away" ? "🔵 Away" : "⚪ Queue";
+  const signedUp = new Set(players.map(p => p.name.toLowerCase()));
+  const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
+  const available = [...fullRoster]
+    .filter(n => !signedUp.has(n.toLowerCase()))
+    .sort((a, b) => firstName(a).localeCompare(firstName(b)));
 
   return (
     <div style={s.root}>
@@ -495,37 +497,84 @@ function CatchUpScreen({ setupPlayers, teamSize, onCancel, onStart }) {
         <div style={{ width: 60 }} />
       </div>
       <div style={{ padding: "0 16px" }}>
-        <div style={s.card}>
-          <p style={s.sectionLabel}>Tap each name to assign them</p>
-          <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 12px" }}>
-            Match who's actually on the court right now. Tap again to cycle Queue → Home → Away.
-          </p>
-          {setupPlayers.map(p => (
-            <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, padding: "10px 0", borderBottom: "0.5px solid " + COLOR.separator }}>
-              <span style={{ fontSize: 15, fontWeight: 600, color: COLOR.label, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}</span>
-              <button style={s.catchUpAssignBtn} onClick={() => cycle(p.id)}>{labelFor(assignments[p.id])}</button>
+
+        {available.length > 0 && (
+          <div style={s.card}>
+            <p style={s.sectionLabel}>Who's here? Tap to add them</p>
+            <p style={s.chipHint}>You don't need everyone signed up first — add them straight from here.</p>
+            <div style={s.chipGrid}>
+              {available.map(n => (
+                <button key={n} style={s.chip} onClick={() => onAddPlayer(n)}>
+                  <span style={{ ...s.chipAvatar, background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }}>
+                    {nameInitials(n)}
+                  </span>
+                  <span style={s.chipName}>{n}</span>
+                </button>
+              ))}
             </div>
-          ))}
-        </div>
+          </div>
+        )}
+
         <div style={s.card}>
-          <p style={s.sectionLabel}>Current win streak (if either team's already hot)</p>
+          <p style={s.sectionLabel}>Who's on the court right now?</p>
+          {players.length === 0 ? (
+            <div style={s.emptyState}>
+              <span style={s.emptyStateIcon}>🏀</span>
+              <p style={s.emptyStateText}>Nobody added yet</p>
+              <p style={s.emptyStateSub}>Tap names above to get started</p>
+            </div>
+          ) : players.map(p => {
+            const role = roleOf(p);
+            return (
+              <div key={p.id} style={s.catchUpRow}>
+                <span style={s.catchUpName}>{p.name}</span>
+                <div style={s.catchUpRoles}>
+                  <button style={{ ...s.catchUpRoleBtn, ...(role === "home" ? s.catchUpRoleHome : {}) }}
+                    onClick={() => setRole(p.id, "home")}>Home</button>
+                  <button style={{ ...s.catchUpRoleBtn, ...(role === "away" ? s.catchUpRoleAway : {}) }}
+                    onClick={() => setRole(p.id, "away")}>Away</button>
+                  <button style={{ ...s.catchUpRoleBtn, ...(role === "queue" ? s.catchUpRoleQueue : {}) }}
+                    onClick={() => setRole(p.id, "queue")}>Queue</button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Where are you in the night?</p>
+          <div style={{ display: "flex", gap: 12, marginTop: 8, alignItems: "flex-end" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <p style={s.catchUpFieldLabel}>Game number</p>
+              <input type="number" min="1" inputMode="numeric" style={s.input} value={gameNumber}
+                onChange={e => setGameNumber(Math.max(1, parseInt(e.target.value) || 1))} />
+            </div>
+          </div>
+          <p style={s.catchUpHelp}>If they've already played two games, this is game 3.</p>
+        </div>
+
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Win streak, if either team's already hot</p>
           <div style={{ display: "flex", gap: 12, marginTop: 8 }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 4px" }}>🟠 Home ({homeCount}/{teamSize})</p>
-              <input type="number" min="0" style={s.input} value={homeStreak} onChange={e => setHomeStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+              <p style={s.catchUpFieldLabel}>🟠 Home ({homeCount}/{teamSize})</p>
+              <input type="number" min="0" inputMode="numeric" style={s.input} value={homeStreak}
+                onChange={e => setHomeStreak(Math.max(0, parseInt(e.target.value) || 0))} />
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 4px" }}>🔵 Away ({awayCount}/{teamSize})</p>
-              <input type="number" min="0" style={s.input} value={awayStreak} onChange={e => setAwayStreak(Math.max(0, parseInt(e.target.value) || 0))} />
+              <p style={s.catchUpFieldLabel}>🔵 Away ({awayCount}/{teamSize})</p>
+              <input type="number" min="0" inputMode="numeric" style={s.input} value={awayStreak}
+                onChange={e => setAwayStreak(Math.max(0, parseInt(e.target.value) || 0))} />
             </div>
           </div>
         </div>
+
         <button
           style={{ ...s.primaryBtn, ...(canStart ? {} : s.primaryBtnDisabled), width: "100%", margin: "16px 0 0" }}
           disabled={!canStart}
-          onClick={() => onStart(assignments, homeStreak, awayStreak)}
+          onClick={() => onStart(assignments, homeStreak, awayStreak, gameNumber)}
         >
-          {canStart ? "Start from here 🏀" : `Need exactly ${teamSize} on each team (${homeCount} Home, ${awayCount} Away)`}
+          {canStart ? "Start from here 🏀" : `Need ${teamSize} on each team — ${homeCount} Home, ${awayCount} Away`}
         </button>
       </div>
     </div>
@@ -762,6 +811,29 @@ function AppInner() {
   const [attendanceView, setAttendanceView] = useState(false); // toggles the attendance browser screen
   const [rosterReady, setRosterReady] = useState(false);
   const [swapPicker, setSwapPicker] = useState(null); // { playerId, isTeamA }
+  // Assignments Catch Up opens with. Empty from the setup screen; from a
+  // live game it mirrors the court so you only correct what is wrong.
+  const [catchUpSeed, setCatchUpSeed] = useState(null);
+
+  // Catch Up is reachable from the setup screen AND from a live game. From a
+  // game it pulls everyone currently involved into setupPlayers and pre-fills
+  // the court, so a session that was built wrong can be corrected without
+  // ending the night and losing the evening's stats.
+  const enterCatchUp = () => {
+    if (view === VIEWS.GAME) {
+      const onCourtA = teamA, onCourtB = teamB;
+      const everyone = [...onCourtA, ...onCourtB, ...queue, ...sittingOut, ...injured];
+      const seed = {};
+      onCourtA.forEach(p => { seed[p.id] = "home"; });
+      onCourtB.forEach(p => { seed[p.id] = "away"; });
+      setCatchUpSeed(seed);
+      setSetupPlayers(everyone);
+    } else {
+      setCatchUpSeed(null);
+    }
+    setView(VIEWS.CATCHUP);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  };
 
   // Haptic feedback — works on supported mobile browsers, silently ignored elsewhere
   const buzz = (pattern) => { try { if (navigator.vibrate) navigator.vibrate(pattern); } catch {} };
@@ -1037,11 +1109,11 @@ function AppInner() {
   const [pendingSignup, setPendingSignup] = useState(null); // raw name typed, awaiting member/guest choice
 
   const commitAdd = (name, isGuest) => {
-    const pool = view === VIEWS.SETUP ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
+    const pool = (view === VIEWS.SETUP || view === VIEWS.CATCHUP) ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
     if (pool.some(p => p.name.toLowerCase() === name.toLowerCase())) { setDupeWarning(name); setPendingSignup(null); return; }
     const jc = joinCounter + 1; setJoinCounter(jc);
     const p = { ...initPlayer(name, jc), isGuest };
-    if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]);
+    if (view === VIEWS.SETUP || view === VIEWS.CATCHUP) setSetupPlayers(prev => [...prev, p]);
     else setQueue(prev => sortQueue([...prev, p]));
     setNameInput(""); setPendingSignup(null);
     // Member always means "remember me" — no separate confirmation step.
@@ -1059,11 +1131,11 @@ function AppInner() {
     // member/guest prompt entirely, they're already on the list.
     const onRoster = fullRoster.some(n => n.toLowerCase() === name.toLowerCase());
     if (onRoster) {
-      const pool = view === VIEWS.SETUP ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
+      const pool = (view === VIEWS.SETUP || view === VIEWS.CATCHUP) ? setupPlayers : [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
       if (pool.some(p => p.name.toLowerCase() === name.toLowerCase())) { setDupeWarning(name); return; }
       const jc = joinCounter + 1; setJoinCounter(jc);
       const p = { ...initPlayer(name, jc), isGuest: false };
-      if (view === VIEWS.SETUP) setSetupPlayers(prev => [...prev, p]);
+      if (view === VIEWS.SETUP || view === VIEWS.CATCHUP) setSetupPlayers(prev => [...prev, p]);
       else setQueue(prev => sortQueue([...prev, p]));
       setNameInput("");
       return;
@@ -1098,6 +1170,10 @@ function AppInner() {
     if (isAdmin && pinIntent === "startSession") {
       setPinIntent(null);
       startSession();
+    }
+    if (isAdmin && pinIntent === "catchUp") {
+      setPinIntent(null);
+      enterCatchUp();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin, pinIntent]);
@@ -1457,17 +1533,26 @@ function AppInner() {
   if (view === VIEWS.CATCHUP) {
     return (
       <CatchUpScreen
-        setupPlayers={setupPlayers}
+        players={setupPlayers}
         teamSize={teamSize}
-        onCancel={() => setView(VIEWS.SETUP)}
-        onStart={(assignments, homeStreak, awayStreak) => {
-          const withRole = id => assignments[id];
-          const home = setupPlayers.filter(p => withRole(p.id) === "home").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: homeStreak, gamesPlayed: 0, wins: 0 }));
-          const away = setupPlayers.filter(p => withRole(p.id) === "away").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: awayStreak, gamesPlayed: 0, wins: 0 }));
-          const waiting = setupPlayers.filter(p => withRole(p.id) === "queue").map(p => ({ ...p, hasPlayed: true, gamesPlayed: 0, wins: 0 }));
+        fullRoster={fullRoster}
+        onAddPlayer={addPlayer}
+        initialAssignments={catchUpSeed}
+        initialGameNumber={catchUpSeed ? gameCount : 1}
+        onCancel={() => { setCatchUpSeed(null); setView(catchUpSeed ? VIEWS.GAME : VIEWS.SETUP); }}
+        onStart={(assignments, homeStreak, awayStreak, gameNumber) => {
+          const roleOf = p => assignments[p.id] || "queue";
+          // Keep whatever games/wins a player already has. Coming from the
+          // setup screen those are zero anyway; coming from a live game,
+          // zeroing them would throw away the night's record.
+          const home = setupPlayers.filter(p => roleOf(p) === "home").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: homeStreak }));
+          const away = setupPlayers.filter(p => roleOf(p) === "away").map(p => ({ ...p, hasPlayed: true, roundsWaited: 0, winStreak: awayStreak }));
+          const waiting = setupPlayers.filter(p => roleOf(p) === "queue").map(p => ({ ...p, hasPlayed: true }));
           setTeamA(home); setTeamB(away);
           setQueue(sortQueue(waiting));
-          setSittingOut([]); setInjured([]); setLeft([]); setGameCount(1); setLastResult(null); setHistory([]);
+          setSittingOut([]); setInjured([]);
+          setGameCount(gameNumber); setLastResult(null); setHistory([]);
+          setCatchUpSeed(null);
           setView(VIEWS.GAME);
           window.scrollTo({ top: 0, behavior: "instant" });
         }}
@@ -1521,11 +1606,9 @@ function AppInner() {
         </div>
         <button style={s.themeToggleBtnCentered} onClick={() => setDarkMode(d => !d)}>{darkMode ? "☀️ Light mode" : "🌙 Dark mode"}</button>
         <button style={s.themeToggleBtnCentered} onClick={() => setAttendanceView(true)}>📋 Attendance History</button>
-        {isAdmin && (
-          <button style={s.catchUpBtnTop} onClick={() => setView(VIEWS.CATCHUP)}>
-            ⏱️ Catch up — game's already in progress
-          </button>
-        )}
+        <button style={s.catchUpBtnTop} onClick={() => { if (isAdmin) enterCatchUp(); else { setPinIntent("catchUp"); setPinMode("admin"); setPinModal(true); } }}>
+          ⏱️ Catch up — game's already in progress
+        </button>
         {isAdmin ? (
           <div>
             <button style={s.testBtn} onClick={loadTest}>Load 12 test players</button>
@@ -2013,6 +2096,7 @@ function AppInner() {
             {adminCountdown !== null ? ("⚠️ Locking in " + adminCountdown + "s — tap to stay") : "🔓 Admin — tap a court player to manage them"}
           </span>
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+            <button style={s.bannerLockBtn} onClick={enterCatchUp}>⏱️ Fix teams</button>
             <button style={s.bannerLockBtn} onClick={() => setEndSessionConfirm(true)}>🗑 End</button>
             <button style={s.bannerLockBtn} onClick={logout}>Lock now</button>
           </div>
@@ -2268,6 +2352,15 @@ function buildS() {
   primaryBtn: { display: "block", width: "calc(100% - 32px)", margin: "16px 16px 0", background: "#0B6E2E", border: "none", borderRadius: RADIUS.md, color: "#fff", fontSize: 19, fontWeight: 800, padding: "18px", cursor: "pointer", boxShadow: "0 4px 14px rgba(11,110,46,0.3)" },
   catchUpBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: "none", border: "none", color: COLOR.secondaryLabel, fontSize: 13, fontWeight: 600, padding: "8px", cursor: "pointer", textAlign: "center" },
   catchUpBtnTop: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.warningSubtleBg, border: "none", borderRadius: RADIUS.sm, color: COLOR.warning, fontSize: 14, fontWeight: 700, padding: "12px", cursor: "pointer", textAlign: "center" },
+  catchUpRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, padding: "10px 0", borderBottom: "0.5px solid " + COLOR.separator, flexWrap: "wrap" },
+  catchUpName: { fontSize: 15, fontWeight: 600, color: COLOR.label, flex: 1, minWidth: 90, overflowWrap: "anywhere" },
+  catchUpRoles: { display: "flex", gap: 4, flexShrink: 0 },
+  catchUpRoleBtn: { background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.secondaryLabel, fontSize: 12, fontWeight: 700, padding: "8px 11px", cursor: "pointer", minWidth: 0 },
+  catchUpRoleHome: { background: "#FF9500", color: "#fff" },
+  catchUpRoleAway: { background: "#007AFF", color: "#fff" },
+  catchUpRoleQueue: { background: COLOR.separator, color: COLOR.label },
+  catchUpFieldLabel: { fontSize: 12, color: COLOR.secondaryLabel, margin: "0 0 4px" },
+  catchUpHelp: { fontSize: 12, color: COLOR.tertiaryLabel, margin: "10px 0 0", lineHeight: 1.4 },
   catchUpAssignBtn: { background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.label, fontSize: 13, fontWeight: 700, padding: "8px 14px", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" },
   primaryBtnDisabled: { background: COLOR.separator, color: COLOR.secondaryLabel, cursor: "default", boxShadow: "none" },
   testBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.systemBackground, border: "none", borderRadius: RADIUS.md, color: COLOR.tint, fontSize: 15, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
