@@ -2022,6 +2022,12 @@ function AppInner() {
           <p style={{ ...s.emptyStateSub, textAlign: "left", padding: "0 20px" }}>Nobody waiting. Everyone signed up is on the court.</p>
         )}
       </div>
+
+      {isAdmin && (
+        <div style={{ margin: "10px 16px 0" }}>
+          <button style={s.sessionBtn} onClick={enterCatchUp}>⏱️ Fix teams (late arrival)</button>
+        </div>
+      )}
         </>
       )}
 
@@ -2046,8 +2052,7 @@ function AppInner() {
       {isAdmin && (
         <div style={s.card}>
           <p style={s.sectionLabel}>Session</p>
-          <button style={s.sessionBtn} onClick={enterCatchUp}>⏱️ Fix teams (late arrival)</button>
-          <button style={{ ...s.sessionBtn, color: COLOR.danger, marginTop: 8 }} onClick={() => setEndSessionConfirm(true)}>End session</button>
+          <button style={{ ...s.sessionBtn, color: COLOR.danger }} onClick={() => setEndSessionConfirm(true)}>End session</button>
         </div>
       )}
 
