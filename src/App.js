@@ -574,7 +574,7 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
   );
 }
 
-function AttendanceScreen({ attendanceLog, onBack }) {
+function AttendanceScreen({ attendanceLog, onBack, embedded }) {
   const [search, setSearch] = useState("");
   const q = search.trim().toLowerCase();
 
@@ -607,12 +607,16 @@ function AttendanceScreen({ attendanceLog, onBack }) {
     : sortedLog;
 
   return (
-    <div style={s.root}>
-      <div style={s.topBar}>
-        <button style={s.lockBtn} onClick={onBack}>← Back</button>
-        <span style={s.gameLabel}>Attendance History</span>
-        <div style={{ width: 60 }} />
-      </div>
+    <div style={embedded ? {} : s.root}>
+      {embedded ? (
+        <div style={s.tabTitleRow}><h1 style={s.tabTitle}>Attendance</h1></div>
+      ) : (
+        <div style={s.topBar}>
+          <button style={s.lockBtn} onClick={onBack}>← Back</button>
+          <span style={s.gameLabel}>Attendance History</span>
+          <div style={{ width: 60 }} />
+        </div>
+      )}
       <div style={{ padding: "0 16px" }}>
         <div style={s.card}>
           <input
@@ -747,8 +751,10 @@ function AppInner() {
   // constant so every existing gate keeps working unchanged.
   const isAdmin = true;
   const [settingsMenu, setSettingsMenu] = useState(false);
+  const [gameTab, setGameTab] = useState("game"); // "game" | "roster" | "log"
 
   const [view, setView] = useState(VIEWS.SETUP);
+  useEffect(() => { if (view !== VIEWS.GAME) setGameTab("game"); }, [view]);
   const [teamSize, setTeamSize] = useState(DEFAULT_TEAM_SIZE);
   // "rotate" = win 2 straight and the team rotates off (current default).
   // "king" = King of the Court — a hot team just keeps playing until they
@@ -1656,7 +1662,7 @@ function AppInner() {
   const ramPos = ram ? ram.pos : null;
 
   return (
-    <div style={s.root}>
+    <div style={{ ...s.root, paddingBottom: 110 }}>
       <ConfirmModal moveConfirm={moveConfirm} setMoveConfirm={setMoveConfirm} />
 
       {subModal && isAdmin && !subPickerModal && (
@@ -1982,38 +1988,16 @@ function AppInner() {
         </div>
       </div>
 
-      {isAdmin && (
-        <div style={s.adminBanner}>
-          <span>Tap a court player to manage them</span>
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            <button style={s.bannerLockBtn} onClick={enterCatchUp}>⏱️ Fix teams</button>
-            <button style={s.bannerLockBtn} onClick={() => setEndSessionConfirm(true)}>🗑 End</button>
-          </div>
-        </div>
-      )}
+      <style>{"* { -webkit-tap-highlight-color: transparent; } .native-row { transition: background-color 0.1s ease-out; } .native-row:active { background-color: rgba(120,120,128,0.12); } @keyframes winPulse{0%{box-shadow:0 0 0 0 rgba(52,199,89,0.5)}50%{box-shadow:0 0 0 12px rgba(52,199,89,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}} @keyframes slideInRight{from{opacity:0;transform:translateX(32px)}to{opacity:1;transform:translateX(0)}} @keyframes slideInLeft{from{opacity:0;transform:translateX(-32px)}to{opacity:1;transform:translateX(0)}} .win-pulse{animation:winPulse 0.7s ease-out} .slide-in-right{animation:slideInRight 0.35s ease-out} .slide-in-left{animation:slideInLeft 0.35s ease-out} @media (prefers-reduced-motion: reduce){ .win-pulse,.slide-in-right,.slide-in-left{animation:none} }"}</style>
 
+      {gameTab === "game" && (
+        <>
       {lastResult && (
         <div style={s.resultBanner}>
           {lastResult.winner && <span style={s.bannerWin}>{lastResult.winner}</span>}
           {lastResult.loser && <span style={s.bannerLose}> - {lastResult.loser}</span>}
         </div>
       )}
-
-      <style>{"* { -webkit-tap-highlight-color: transparent; } .native-row { transition: background-color 0.1s ease-out; } .native-row:active { background-color: rgba(120,120,128,0.12); } @keyframes winPulse{0%{box-shadow:0 0 0 0 rgba(52,199,89,0.5)}50%{box-shadow:0 0 0 12px rgba(52,199,89,0)}100%{box-shadow:0 0 0 0 rgba(74,222,128,0)}} @keyframes slideInRight{from{opacity:0;transform:translateX(32px)}to{opacity:1;transform:translateX(0)}} @keyframes slideInLeft{from{opacity:0;transform:translateX(-32px)}to{opacity:1;transform:translateX(0)}} .win-pulse{animation:winPulse 0.7s ease-out} .slide-in-right{animation:slideInRight 0.35s ease-out} .slide-in-left{animation:slideInLeft 0.35s ease-out} @media (prefers-reduced-motion: reduce){ .win-pulse,.slide-in-right,.slide-in-left{animation:none} }"}</style>
-
-      <div style={s.statsBanner}>
-        <div style={s.statsBannerRow}>
-          <div style={s.statsBannerItem}>
-            <span style={s.statsBannerNum}>{total}</span>
-            <span style={s.statsBannerLabel}>active now</span>
-          </div>
-          <div style={s.statsBannerItem}>
-            <span style={s.statsBannerNum}>{totalTonight}</span>
-            <span style={s.statsBannerLabel}>came today</span>
-          </div>
-        </div>
-        <span style={s.statsBannerSub}>{memberCount} member{memberCount === 1 ? "" : "s"} · {guestCount} guest{guestCount === 1 ? "" : "s"}</span>
-      </div>
 
       <div style={s.court}>
         <div style={s.halfLine} />
@@ -2048,28 +2032,83 @@ function AppInner() {
       )}
       {isAdmin && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
 
-      <div style={{ ...s.card, ...(timerDone ? s.cardDone : timerRunning ? s.cardRunning : {}), padding: 0 }}>
-        <div style={{ ...s.sectionHeaderFill, background: timerDone ? "#FF3B30" : (COLOR === COLOR_DARK ? "#5A5A5E" : "#1C1C1E") }}>
-          <p style={s.sectionHeaderFillText}>Game Timer</p>
+      <div style={{ ...s.card, margin: "12px 16px 0", padding: "14px 16px 4px", ...(timerDone ? s.cardDone : timerRunning ? s.cardRunning : {}) }}>
+        <div style={{ ...s.timerDisplay, marginBottom: 10, justifyContent: "center" }}>
+          <span style={{ ...s.timerTime, fontSize: 52, fontWeight: 600, fontVariantNumeric: "tabular-nums", color: timerDone ? "#FF3B30" : timerSeconds <= 60 ? "#FF9500" : COLOR.tint }}>{timerDisplay()}</span>
+          {timerDone && <span style={s.timerDoneLabel}>GAME OVER</span>}
         </div>
-        <div style={s.timerCardContent}>
-          <div style={s.timerDisplay}>
-            <span style={{ ...s.timerTime, color: timerDone ? "#FF3B30" : timerSeconds <= 60 ? "#FF9500" : "#007AFF" }}>{timerDisplay()}</span>
-            {timerDone && <span style={s.timerDoneLabel}>GAME OVER</span>}
+        {isAdmin && (
+          <div style={s.timerBtnRow}>
+            <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>
+            <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>
+            {!timerDone && (timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>▶</button>)}
+            <button style={s.timerBtnReset} onClick={resetTimer}>■</button>
+            <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>
+            <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>
           </div>
-          {isAdmin && (
-            <div style={s.timerBtnRow}>
-              <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>
-              <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>
-              {!timerDone && (timerRunning ? <button style={s.timerBtnPause} onClick={pauseTimer}>⏸</button> : <button style={s.timerBtnStart} onClick={startTimer}>▶</button>)}
-              <button style={s.timerBtnReset} onClick={resetTimer}>■</button>
-              <button style={s.timerBtnAdd} onClick={() => adjustTimer(10)}>+10s</button>
-              <button style={s.timerBtnAdd} onClick={() => adjustTimer(60)}>+1m</button>
-            </div>
-          )}
-          <p style={s.timerHint}>Announces at every minute - buzzer at 0:00</p>
-        </div>
+        )}
       </div>
+
+      <div style={s.railWrap}>
+        <div style={s.railHeader}>
+          <span>Next up</span>
+          <span style={{ fontWeight: 500 }}>{sortedQ.length} waiting</span>
+        </div>
+        {sortedQ.length > 0 ? (
+          <div style={s.rail}>
+            {sortedQ.slice(0, 8).map((p, i) => (
+              <button key={p.id} style={s.railChip} onClick={() => { if (isAdmin) setRowActionModal({ player: p, zone: "queue", pos: i + 1 }); }}>
+                <span style={s.railNum}>{i + 1}</span>{p.name}
+              </button>
+            ))}
+            {sortedQ.length > 8 && <button style={{ ...s.railChip, color: COLOR.tint, fontWeight: 600 }} onClick={() => setGameTab("roster")}>+{sortedQ.length - 8}</button>}
+          </div>
+        ) : (
+          <p style={{ ...s.emptyStateSub, textAlign: "left", padding: "0 20px" }}>Nobody waiting. Everyone signed up is on the court.</p>
+        )}
+      </div>
+        </>
+      )}
+
+      {gameTab === "roster" && (
+        <>
+      <div style={s.tabTitleRow}><h1 style={s.tabTitle}>Roster</h1></div>
+
+      <div style={s.statsBanner}>
+        <div style={s.statsBannerRow}>
+          <div style={s.statsBannerItem}>
+            <span style={s.statsBannerNum}>{total}</span>
+            <span style={s.statsBannerLabel}>active now</span>
+          </div>
+          <div style={s.statsBannerItem}>
+            <span style={s.statsBannerNum}>{totalTonight}</span>
+            <span style={s.statsBannerLabel}>came today</span>
+          </div>
+        </div>
+        <span style={s.statsBannerSub}>{memberCount} member{memberCount === 1 ? "" : "s"} · {guestCount} guest{guestCount === 1 ? "" : "s"}</span>
+      </div>
+
+      {isAdmin && (
+        <div style={s.card}>
+          <p style={s.sectionLabel}>Session</p>
+          <button style={s.sessionBtn} onClick={enterCatchUp}>⏱️ Fix teams (late arrival)</button>
+          <button style={{ ...s.sessionBtn, color: COLOR.danger, marginTop: 8 }} onClick={() => setEndSessionConfirm(true)}>End session</button>
+        </div>
+      )}
+
+      {isAdmin && (
+        <>
+          <div style={s.card}>
+            <p style={s.sectionLabel}>Join the run</p>
+            <div style={s.row}>
+              <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
+              <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
+            </div>
+          </div>
+
+          <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
+        </>
+      )}
 
       {sortedQ.length > 0 ? (
         <ZoneSection title={"Up next - " + sortedQ.length + " waiting"} accent="#34C759">
@@ -2099,20 +2138,6 @@ function AppInner() {
             <p style={s.emptyStateSub}>Everyone signed up is already on the court</p>
           </div>
         </ZoneSection>
-      )}
-
-      {isAdmin && (
-        <>
-          <div style={s.card}>
-            <p style={s.sectionLabel}>Join the run</p>
-            <div style={s.row}>
-              <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
-              <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
-            </div>
-          </div>
-
-          <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
-        </>
       )}
 
       {sittingOut.length > 0 ? (
@@ -2168,6 +2193,28 @@ function AppInner() {
           ))}
         </ZoneSection>
       )}
+        </>
+      )}
+
+      {gameTab === "log" && <AttendanceScreen attendanceLog={attendanceLog} embedded onBack={() => setGameTab("game")} />}
+
+      <nav style={s.tabBar} aria-label="Sections">
+        <button style={{ ...s.tabItem, ...(gameTab === "game" ? s.tabItemActive : {}) }} onClick={() => { setGameTab("game"); window.scrollTo({ top: 0 }); }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3a9 9 0 100 18 9 9 0 000-18zM3 12h18M12 3c3 3 3 15 0 18M12 3c-3 3-3 15 0 18" /></svg>
+          <span style={s.tabLabel}>Game</span>
+        </button>
+        <button style={{ ...s.tabItem, ...(gameTab === "roster" ? s.tabItemActive : {}) }} onClick={() => { setGameTab("roster"); window.scrollTo({ top: 0 }); }}>
+          <span style={{ position: "relative", display: "inline-flex" }}>
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M16 20v-2a4 4 0 00-4-4H7a4 4 0 00-4 4v2M9.5 10a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM21 20v-2a4 4 0 00-3-3.9M16 3.1a3.5 3.5 0 010 6.8" /></svg>
+            {queue.length > 0 && <span style={s.tabBadge}>{queue.length}</span>}
+          </span>
+          <span style={s.tabLabel}>Roster</span>
+        </button>
+        <button style={{ ...s.tabItem, ...(gameTab === "log" ? s.tabItemActive : {}) }} onClick={() => { setGameTab("log"); window.scrollTo({ top: 0 }); }}>
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M8 2v4M16 2v4M3 9h18M5 4h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z" /></svg>
+          <span style={s.tabLabel}>Log</span>
+        </button>
+      </nav>
     </div>
   );
 }
@@ -2203,6 +2250,20 @@ function buildS() {
   header: { textAlign: "center", padding: "48px 20px 24px", background: COLOR.systemBackground },
   logoImg: { width: 84, maxWidth: "40%", height: "auto", marginBottom: 8, display: "block", marginLeft: "auto", marginRight: "auto" },
   churchName: { margin: "0 0 16px", fontSize: 13, fontWeight: 700, letterSpacing: "0.12em", color: COLOR.secondaryLabel, lineHeight: 1.5, textAlign: "center" },
+  tabBar: { position: "fixed", bottom: 0, left: "50%", transform: "translateX(-50%)", width: "100%", maxWidth: 480, boxSizing: "border-box", display: "flex", background: COLOR.systemBackground, borderTop: "0.5px solid " + COLOR.separator, padding: "6px 8px calc(6px + env(safe-area-inset-bottom))", zIndex: 30 },
+  tabItem: { flex: 1, minHeight: 50, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, background: "none", border: "none", color: COLOR.secondaryLabel, cursor: "pointer", fontFamily: "inherit" },
+  tabItemActive: { color: COLOR.tint },
+  tabLabel: { fontSize: 11, fontWeight: 600 },
+  tabBadge: { position: "absolute", top: -4, right: -10, minWidth: 18, height: 18, borderRadius: 9, boxSizing: "border-box", padding: "0 5px", background: COLOR.tint, color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" },
+  railWrap: { margin: "16px 0 0" },
+  railHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 20px 8px", fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: COLOR.secondaryLabel },
+  rail: { display: "flex", gap: 8, padding: "0 16px 4px", overflowX: "auto", WebkitOverflowScrolling: "touch" },
+  railChip: { flex: "none", minHeight: 44, display: "flex", alignItems: "center", gap: 8, padding: "0 14px 0 8px", borderRadius: 22, border: "none", background: COLOR.systemBackground, color: COLOR.label, fontSize: 15, fontWeight: 500, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 1px 2px rgba(0,0,0,0.06)" },
+  railNum: { width: 28, height: 28, borderRadius: 14, background: COLOR.tertiarySystemBackground, color: COLOR.secondaryLabel, fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" },
+  tabTitleRow: { padding: "18px 20px 0" },
+  tabTitle: { margin: 0, fontSize: 30, fontWeight: 800, letterSpacing: "-0.02em", color: COLOR.label },
+  sessionBtn: { display: "block", width: "100%", minHeight: 48, background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.tint, fontSize: 16, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
+  seeAllRow: { padding: "14px 16px", textAlign: "center", fontSize: 15, fontWeight: 600, color: COLOR.tint, cursor: "pointer", borderTop: "0.5px solid " + COLOR.separator },
   topBarLogo: { width: 22, height: "auto", flexShrink: 0 },
   // clamp() keeps the largest type on the page from overflowing narrow
   // phones while preserving the intended size on anything 400px and up.
