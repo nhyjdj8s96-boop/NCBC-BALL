@@ -58,6 +58,9 @@ const _firebaseReadyPromise = (async () => {
     const app = initializeApp(firebaseConfig);
     _fsdb = initializeFirestore(app, {
       localCache: persistentLocalCache({ tabManager: persistentSingleTabManager({}) }),
+      // Firestore throws on any undefined field by default. Skip them instead
+      // of crashing the whole app.
+      ignoreUndefinedProperties: true,
     });
     _fsdoc = doc; _fssetDoc = setDoc; _fsonSnapshot = onSnapshot;
     _usingFirebase = true;
@@ -69,7 +72,22 @@ const _firebaseReadyPromise = (async () => {
 // Public helpers used by the rest of the app — same signatures regardless
 // of which backend ends up active.
 function doc(_db, collection, id) { return _usingFirebase ? _fsdoc(_fsdb, collection, id) : _localDoc(_db, collection, id); }
-function setDoc(ref, data) { return _usingFirebase ? _fssetDoc(ref, data) : _localSetDoc(ref, data); }
+// Recursively drop undefined values (arrays keep their length, with null in
+// place of undefined) so no payload can ever be rejected by Firestore.
+function stripUndefined(v) {
+  if (v === undefined) return null;
+  if (Array.isArray(v)) return v.map(stripUndefined);
+  if (v && typeof v === "object") {
+    const out = {};
+    Object.keys(v).forEach(k => { if (v[k] !== undefined) out[k] = stripUndefined(v[k]); });
+    return out;
+  }
+  return v;
+}
+function setDoc(ref, data) {
+  const clean = stripUndefined(data);
+  return _usingFirebase ? _fssetDoc(ref, clean) : _localSetDoc(ref, clean);
+}
 function onSnapshot(ref, cb) { return _usingFirebase ? _fsonSnapshot(ref, cb) : _localOnSnapshot(ref, cb); }
 
 // SESSION_DOC / ROSTER_DOC can't be resolved until we know which backend won
@@ -1445,7 +1463,7 @@ function AppInner() {
 
   // result
   const saveSnap = () => setHistory(prev => [...prev, { teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult }]);
-  const undo = withAdmin(() => { if (!history.length) return; const p = history[history.length - 1]; setTeamA(p.teamA); setTeamB(p.teamB); setQueue(p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount); setLastResult(p.lastResult); setHistory(h => h.slice(0, -1)); });
+  const undo = withAdmin(() => { if (!history.length) return; const p = history[history.length - 1]; setTeamA(p.teamA); setTeamB(p.teamB); setQueue(p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setHistory(h => h.slice(0, -1)); });
 
   const recordResult = winnerIsA => {
     const winner = winnerIsA ? teamA : teamB, loser = winnerIsA ? teamB : teamA;
