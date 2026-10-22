@@ -101,10 +101,6 @@ let _attendanceDocCache = null;
 function getAttendanceDoc() { if (!_attendanceDocCache || _attendanceDocCache._firebaseState !== _usingFirebase) { _attendanceDocCache = doc(null, "sessions", "ncbc-attendance"); _attendanceDocCache._firebaseState = _usingFirebase; } return _attendanceDocCache; }
 
 const DEFAULT_TEAM_SIZE = 5;
-const ADMIN_PIN = "0720";
-const ASSISTANT_PIN = "8611";
-const ADMIN_TIMEOUT = 10 * 60 * 1000;
-const ADMIN_IDLE_WARNING = 9 * 60 * 1000;
 const TIMER_DURATION = 8 * 60;
 // Session and roster sync live via Firebase when available, falling back
 // to a same-shape localStorage layer automatically (see top of file).
@@ -323,43 +319,6 @@ function positionHeat(pos, teamSize) {
 }
 
 // ── TOP-LEVEL COMPONENTS ──────────────────────────────────────────────────────
-
-function PinModal({ pinInput, pinError, setPinModal, setPinInput, setPinError, setIsAdmin, setAssistantMode, mode }) {
-  const close = () => { setPinModal(false); setPinInput(""); setPinError(false); };
-  const targetPin = mode === "assistant" ? ASSISTANT_PIN : ADMIN_PIN;
-  const title = mode === "assistant" ? "Assistant PIN" : "Admin PIN";
-  return (
-    <div style={s.overlay} onClick={close}>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
-        <div style={s.modalGrabber} />
-        <p style={s.modalTitle}>{title}</p>
-        <div style={s.pinDots}>
-          {[0,1,2,3].map(i => <div key={i} style={{ ...s.pinDot, ...(pinInput.length > i ? s.pinDotFilled : {}) }} />)}
-        </div>
-        {pinError && <p style={s.pinError}>Incorrect PIN</p>}
-        <div style={s.pinGrid}>
-          {["1","2","3","4","5","6","7","8","9","","0","<"].map((k, i) => (
-            <button key={i} style={{ ...s.pinKey, ...(k === "" ? s.pinKeyEmpty : {}) }} onClick={() => {
-              if (k === "") return;
-              if (k === "<") { setPinInput(p => p.slice(0, -1)); setPinError(false); return; }
-              if (pinInput.length < 4) {
-                const next = pinInput + k; setPinInput(next); setPinError(false);
-                if (next.length === 4) setTimeout(() => {
-                  if (next === targetPin) {
-                    if (mode === "assistant") setAssistantMode(true); else setIsAdmin(true);
-                    setPinModal(false); setPinInput("");
-                  }
-                  else { setPinError(true); setPinInput(""); }
-                }, 100);
-              }
-            }}>{k === "<" ? "del" : k}</button>
-          ))}
-        </div>
-        <button style={s.btnCancel} onClick={close}>Cancel</button>
-      </div>
-    </div>
-  );
-}
 
 function ConfirmModal({ moveConfirm, setMoveConfirm }) {
   if (!moveConfirm) return null;
@@ -783,28 +742,11 @@ function AppInner() {
   const [endTime, setEndTime] = useState(null);
   const [pausedSecondsLeft, setPausedSecondsLeft] = useState(TIMER_DURATION);
 
-  const [isAdmin, setIsAdmin] = useState(false);
-  // Three total access tiers: Player (default, pure view-only), Assistant
-  // (adds timer play/pause only), Admin (full control, unlocked via PIN).
-  // Assistant is intentionally a separate, lighter flag rather than folded
-  // into isAdmin — it should never unlock subs, swaps, results, or any of
-  // the real management actions isAdmin already correctly gates.
-  const [assistantMode, setAssistantMode] = useState(false);
-  const [pinModal, setPinModal] = useState(false);
-  const [pinMode, setPinMode] = useState("admin"); // "admin" | "assistant"
+  // One access level: everyone who opens the app can run it. (Player,
+  // Assistant and PIN-locked Admin tiers were removed.) isAdmin stays as a
+  // constant so every existing gate keeps working unchanged.
+  const isAdmin = true;
   const [settingsMenu, setSettingsMenu] = useState(false);
-  const [modeMenu, setModeMenu] = useState(false);
-  // Tracks what the person was trying to do when the PIN prompt fired, so a
-  // successful unlock can pick up right where they left off (e.g. tapping
-  // "Run It" pre-admin should actually start the session once unlocked,
-  // not just silently grant admin and leave them to tap it again).
-  const [pinIntent, setPinIntent] = useState(null); // "startSession" | null
-  const [pinInput, setPinInput] = useState("");
-  const [pinError, setPinError] = useState(false);
-  const adminTimerRef = useRef(null);
-  const adminCountdownRef = useRef(null);
-  const lastActivityRef = useRef(Date.now());
-  const [adminCountdown, setAdminCountdown] = useState(null);
 
   const [view, setView] = useState(VIEWS.SETUP);
   const [teamSize, setTeamSize] = useState(DEFAULT_TEAM_SIZE);
@@ -834,7 +776,6 @@ function AppInner() {
   const [animKey, setAnimKey] = useState(0);
   const [moveConfirm, setMoveConfirm] = useState(null);
   const [endSessionConfirm, setEndSessionConfirm] = useState(false);
-  const [winConfirm, setWinConfirm] = useState(null); // true = Home won, false = Away won, null = closed
   const [dupeWarning, setDupeWarning] = useState(null);
   const [customRoster, setCustomRoster] = useState([]);
   // Permanent attendance archive — one entry per night, never wiped by
@@ -1113,27 +1054,7 @@ function AppInner() {
   };
   const timerDisplay = () => { const m = Math.floor(timerSeconds / 60), sc = timerSeconds % 60; return m + ":" + String(sc).padStart(2, "0"); };
 
-  // admin
-  const resetAdminTimer = useCallback(() => {
-    lastActivityRef.current = Date.now(); setAdminCountdown(null);
-    if (adminTimerRef.current) clearTimeout(adminTimerRef.current);
-    adminTimerRef.current = setTimeout(() => { setIsAdmin(false); setSubModal(null); setAdminCountdown(null); }, ADMIN_TIMEOUT);
-  }, []);
-
-  useEffect(() => {
-    if (!isAdmin) { setAdminCountdown(null); return; }
-    adminCountdownRef.current = setInterval(() => {
-      const idle = Date.now() - lastActivityRef.current;
-      if (idle >= ADMIN_IDLE_WARNING) { const r = Math.ceil((ADMIN_TIMEOUT - idle) / 1000); setAdminCountdown(r <= 0 ? null : Math.min(r, 60)); }
-      else setAdminCountdown(null);
-    }, 500);
-    return () => clearInterval(adminCountdownRef.current);
-  }, [isAdmin]);
-
-  const withAdmin = fn => (...args) => { if (!isAdmin) return; resetAdminTimer(); fn(...args); };
-  const logout = () => { setIsAdmin(false); setSubModal(null); setAdminCountdown(null); if (adminTimerRef.current) clearTimeout(adminTimerRef.current); clearInterval(adminCountdownRef.current); };
-
-  useEffect(() => { if (isAdmin) resetAdminTimer(); return () => { if (adminTimerRef.current) clearTimeout(adminTimerRef.current); }; }, [isAdmin, resetAdminTimer]);
+  const withAdmin = fn => fn;
 
   // players
   const capitalize = n => n.trim().split(/\s+/).map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
@@ -1198,20 +1119,6 @@ function AppInner() {
     buzz(15);
   };
 
-  // Once admin unlocks, pick up whatever action was waiting on it (currently
-  // just "Run It"), then clear the intent so it doesn't fire again later.
-  useEffect(() => {
-    if (isAdmin && pinIntent === "startSession") {
-      setPinIntent(null);
-      startSession();
-    }
-    if (isAdmin && pinIntent === "catchUp") {
-      setPinIntent(null);
-      enterCatchUp();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isAdmin, pinIntent]);
-
   const startSession = () => {
     if (setupPlayers.length < teamSize * 2) return;
     const sorted = sortQueue(setupPlayers);
@@ -1226,11 +1133,6 @@ function AppInner() {
     setTeamB(firstTen.slice(teamSize).map(p => ({ ...p, hasPlayed: true, roundsWaited: 0 })));
     setQueue(sortQueue(sorted.slice(teamSize * 2).map(p => ({ ...p, hasPlayed: true }))));
     setSittingOut([]); setInjured([]); setLeft([]); setGameCount(1); setLastResult(null); setHistory([]);
-    // Stay unlocked into the game. Locking here cost the admin a second PIN
-    // entry ten seconds after the first, and bought nothing: logout() drops
-    // to Player (view-only), not Assistant, so it never set up a handoff
-    // either. Handing the phone over is a deliberate switch to Assistant
-    // with its own PIN, and admin still auto-locks after ADMIN_TIMEOUT idle.
     setView(VIEWS.GAME);
     window.scrollTo({ top: 0, behavior: "instant" });
   };
@@ -1306,7 +1208,7 @@ function AppInner() {
     setSubModal(null); setLastWinner(null); setMoveConfirm(null);
     setTimerSeconds(TIMER_DURATION); setTimerRunning(false); setTimerDone(false);
     setSessionSummary(null);
-    setView(VIEWS.SETUP); logout();
+    setView(VIEWS.SETUP);
   };
 
   // queue management
@@ -1493,7 +1395,6 @@ function AppInner() {
       const shuffled = [...everyoneOnCourt].sort(() => Math.random() - 0.5);
       const newA = shuffled.slice(0, teamSize).map(p => ({ ...p, roundsWaited: 0 }));
       const newB = shuffled.slice(teamSize).map(p => ({ ...p, roundsWaited: 0 }));
-      if (isAdmin) resetAdminTimer();
       saveSnap();
       buzz([40, 60, 40]);
       setTeamA(newA); setTeamB(newB);
@@ -1506,7 +1407,6 @@ function AppInner() {
       return;
     }
     const staying = [...notStreaking, ...forcedStay.map(p => ({ ...p, winStreak: 0 }))];
-    if (isAdmin) resetAdminTimer();
     saveSnap();
     buzz([40, 60, 40]);
     const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
@@ -1598,7 +1498,6 @@ function AppInner() {
   if (view === VIEWS.SETUP) {
     return (
       <div style={s.root}>
-        {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} setAssistantMode={setAssistantMode} mode={pinMode} />}
         {endSessionConfirm && (
           <div style={s.overlay} onClick={() => setEndSessionConfirm(false)}>
             <div style={s.modal} onClick={e => e.stopPropagation()}>
@@ -1640,19 +1539,14 @@ function AppInner() {
         </div>
         <button style={s.themeToggleBtnCentered} onClick={() => setDarkMode(d => !d)}>{darkMode ? "☀️ Light mode" : "🌙 Dark mode"}</button>
         <button style={s.themeToggleBtnCentered} onClick={() => setAttendanceView(true)}>📋 Attendance History</button>
-        <button style={s.catchUpBtnTop} onClick={() => { if (isAdmin) enterCatchUp(); else { setPinIntent("catchUp"); setPinMode("admin"); setPinModal(true); } }}>
+        <button style={s.catchUpBtnTop} onClick={enterCatchUp}>
           ⏱️ Catch up — game's already in progress
         </button>
-        {isAdmin ? (
-          <div>
-            <button style={s.testBtn} onClick={loadTest}>Load 12 test players</button>
-            <button style={s.testBtn} onClick={loadTest24}>Load 24 test players</button>
-            <button style={s.logoutBtn} onClick={() => setEndSessionConfirm(true)}>Clear saved session</button>
-            <button style={s.logoutBtn} onClick={logout}>Lock admin</button>
-          </div>
-        ) : (
-          <button style={s.adminUnlockBtn} onClick={() => { setPinMode("admin"); setPinModal(true); }}>🔒 Admin</button>
-        )}
+        <div>
+          <button style={s.testBtn} onClick={loadTest}>Load 12 test players</button>
+          <button style={s.testBtn} onClick={loadTest24}>Load 24 test players</button>
+          <button style={s.logoutBtn} onClick={() => setEndSessionConfirm(true)}>Clear saved session</button>
+        </div>
         {isAdmin && customRoster.length > 0 && (
           <div style={s.card}>
             <p style={s.sectionLabel}>Added regulars ({customRoster.length})</p>
@@ -1728,8 +1622,8 @@ function AppInner() {
             </div>
           )}
         </div>
-        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < teamSize * 2 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < teamSize * 2} onClick={() => { if (isAdmin) startSession(); else { setPinIntent("startSession"); setPinMode("admin"); setPinModal(true); } }}>
-          {setupPlayers.length >= teamSize * 2 ? (isAdmin ? "Run It 🏀" : "🔒 Run It 🏀") : "Need " + (teamSize * 2 - setupPlayers.length) + " more to start"}
+        <button style={{ ...s.primaryBtn, ...(setupPlayers.length < teamSize * 2 ? s.primaryBtnDisabled : {}) }} disabled={setupPlayers.length < teamSize * 2} onClick={startSession}>
+          {setupPlayers.length >= teamSize * 2 ? "Run It 🏀" : "Need " + (teamSize * 2 - setupPlayers.length) + " more to start"}
         </button>
       </div>
     );
@@ -1763,7 +1657,6 @@ function AppInner() {
 
   return (
     <div style={s.root}>
-      {pinModal && <PinModal pinInput={pinInput} pinError={pinError} setPinModal={setPinModal} setPinInput={setPinInput} setPinError={setPinError} setIsAdmin={setIsAdmin} setAssistantMode={setAssistantMode} mode={pinMode} />}
       <ConfirmModal moveConfirm={moveConfirm} setMoveConfirm={setMoveConfirm} />
 
       {subModal && isAdmin && !subPickerModal && (
@@ -1996,19 +1889,6 @@ function AppInner() {
         </div>
       )}
 
-      {winConfirm !== null && (
-        <div style={s.overlay} onClick={() => setWinConfirm(null)}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <div style={s.modalGrabber} />
-            <p style={s.modalTitle}>{winConfirm ? "🏆 Home Wins?" : "🏆 Away Wins?"}</p>
-            <p style={s.modalDesc}>Confirm the winning team before it's recorded:</p>
-            <p style={s.modalDesc}><b>{winConfirm ? "Home: " : "Away: "}{(winConfirm ? teamA : teamB).map(p => p.name).join(", ")}</b></p>
-            <button style={s.btnPrimary} onClick={() => { recordResult(winConfirm); setWinConfirm(null); }}>Yes, this team won</button>
-            <button style={s.btnCancel} onClick={() => setWinConfirm(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
       {sessionSummary && (
         <div style={s.overlay}>
           <div style={{ ...s.modal, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
@@ -2099,40 +1979,15 @@ function AppInner() {
               </div>
             </>
           )}
-          {isAdmin ? (
-            <button style={s.lockBtn} onClick={logout}>🔓 Admin</button>
-          ) : (
-            <div style={{ position: "relative" }}>
-              <button style={s.lockBtn} onClick={() => setModeMenu(v => !v)}>
-                {assistantMode ? "🧑‍🔧 Assistant" : "👀 Player"}
-              </button>
-              {modeMenu && (
-                <>
-                  <div style={s.settingsPopoverBackdrop} onClick={() => setModeMenu(false)} />
-                  <div style={s.settingsPopover} onClick={e => e.stopPropagation()}>
-                    <button style={s.settingsPopoverItem} onClick={() => { setModeMenu(false); if (assistantMode) setAssistantMode(false); else { setPinMode("assistant"); setPinModal(true); } }}>
-                      {assistantMode ? "👀 Switch to Player" : "🧑‍🔧 Switch to Assistant"}
-                    </button>
-                    <button style={s.settingsPopoverItem} onClick={() => { setModeMenu(false); setPinMode("admin"); setPinModal(true); }}>
-                      🔓 Switch to Admin
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          )}
         </div>
       </div>
 
       {isAdmin && (
-        <div style={{ ...s.adminBanner, ...(adminCountdown !== null ? s.adminBannerWarning : {}) }}>
-          <span onPointerDown={() => resetAdminTimer()}>
-            {adminCountdown !== null ? ("⚠️ Locking in " + adminCountdown + "s — tap to stay") : "🔓 Admin — tap a court player to manage them"}
-          </span>
+        <div style={s.adminBanner}>
+          <span>Tap a court player to manage them</span>
           <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
             <button style={s.bannerLockBtn} onClick={enterCatchUp}>⏱️ Fix teams</button>
             <button style={s.bannerLockBtn} onClick={() => setEndSessionConfirm(true)}>🗑 End</button>
-            <button style={s.bannerLockBtn} onClick={logout}>Lock now</button>
           </div>
         </div>
       )}
@@ -2185,10 +2040,10 @@ function AppInner() {
         </div>
       </div>
 
-      {(isAdmin || assistantMode) && (
+      {isAdmin && (
         <div style={s.btnRow}>
-          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => { if (assistantMode && !isAdmin) setWinConfirm(true); else recordResult(true); }}>🏆 Home Wins</button>
-          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => { if (assistantMode && !isAdmin) setWinConfirm(false); else recordResult(false); }}>🏆 Away Wins</button>
+          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => recordResult(true)}>🏆 Home Wins</button>
+          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => recordResult(false)}>🏆 Away Wins</button>
         </div>
       )}
       {isAdmin && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
@@ -2202,7 +2057,7 @@ function AppInner() {
             <span style={{ ...s.timerTime, color: timerDone ? "#FF3B30" : timerSeconds <= 60 ? "#FF9500" : "#007AFF" }}>{timerDisplay()}</span>
             {timerDone && <span style={s.timerDoneLabel}>GAME OVER</span>}
           </div>
-          {(assistantMode || isAdmin) && (
+          {isAdmin && (
             <div style={s.timerBtnRow}>
               <button style={s.timerBtnSub} onClick={() => adjustTimer(-60)}>-1m</button>
               <button style={s.timerBtnSub} onClick={() => adjustTimer(-10)}>-10s</button>
@@ -2246,7 +2101,7 @@ function AppInner() {
         </ZoneSection>
       )}
 
-      {(isAdmin || assistantMode) && (
+      {isAdmin && (
         <>
           <div style={s.card}>
             <p style={s.sectionLabel}>Join the run</p>
