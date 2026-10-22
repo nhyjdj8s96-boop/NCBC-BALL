@@ -1223,21 +1223,22 @@ function AppInner() {
   };
 
   // queue management
+  // Every move below looks the player up from CURRENT state first, then issues
+  // plain removes/adds. (The old versions captured the player inside one state
+  // updater and read it in another; React can run those in either order, so a
+  // player could silently vanish.)
   const skipRound = withAdmin(id => {
-    let moved = null;
-    setQueue(prev => { moved = prev.find(x => x.id === id) || null; return sortQueue(prev.filter(x => x.id !== id)); });
-    setSittingOut(prev => moved ? [...prev, moved] : prev);
+    const moved = queue.find(x => x.id === id); if (!moved) return;
+    setQueue(prev => sortQueue(prev.filter(x => x.id !== id)));
+    setSittingOut(prev => prev.some(x => x.id === id) ? prev : [...prev, moved]);
   });
   // "I'm up next but need a breather for THIS game" — guaranteed to be at the
   // very front of the queue once the current game finishes, no matter what
   // the fairness math would otherwise say. Distinct from a regular sit-out,
   // which just preserves priority indefinitely with no guaranteed return point.
   const skipOneGame = withAdmin(id => {
-    let moved = null;
-    setQueue(prev => {
-      moved = prev.find(x => x.id === id) || null;
-      return prev.filter(x => x.id !== id);
-    });
+    const moved = queue.find(x => x.id === id); if (!moved) return;
+    setQueue(prev => prev.filter(x => x.id !== id));
     // gameCount + 2, not + 1. This person is in the QUEUE, so they are not
     // playing the current game at all — the game they are giving up is the
     // NEXT one. The release check at the end of a game asks whether
@@ -1246,37 +1247,37 @@ function AppInner() {
     // with a front-of-line boost on top of it). The two on-court paths
     // below correctly use gameCount / gameCount + 1, because those players
     // really are missing the game in progress.
-    setSittingOut(prev => moved ? [...prev, { ...moved, skipUntilGame: gameCount + 2 }] : prev);
+    setSittingOut(prev => prev.some(x => x.id === id) ? prev : [...prev, { ...moved, skipUntilGame: gameCount + 2 }]);
     buzz(20);
   });
   const rejoin = withAdmin(id => {
-    let moved = null;
-    setSittingOut(prev => { moved = prev.find(x => x.id === id) || null; return prev.filter(x => x.id !== id); });
-    setQueue(prev => moved ? sortQueue([...prev, moved]) : prev);
+    const moved = sittingOut.find(x => x.id === id); if (!moved) return;
+    setSittingOut(prev => prev.filter(x => x.id !== id));
+    setQueue(prev => prev.some(x => x.id === id) ? prev : sortQueue([...prev, moved]));
   });
   const rejoinInjured = withAdmin(id => {
-    let moved = null;
-    setInjured(prev => { moved = prev.find(x => x.id === id) || null; return prev.filter(x => x.id !== id); });
-    setQueue(prev => moved ? sortQueue([...prev, moved]) : prev);
+    const moved = injured.find(x => x.id === id); if (!moved) return;
+    setInjured(prev => prev.filter(x => x.id !== id));
+    setQueue(prev => prev.some(x => x.id === id) ? prev : sortQueue([...prev, moved]));
     buzz(20);
   });
   const markInjured = withAdmin(id => {
-    let moved = null;
-    setQueue(prev => { const f = prev.find(x => x.id === id); if (f) moved = f; return prev.filter(x => x.id !== id); });
-    setSittingOut(prev => { if (!moved) { const f = prev.find(x => x.id === id); if (f) moved = f; } return prev.filter(x => x.id !== id); });
-    setInjured(prev => moved ? [...prev, { ...moved, winStreak: 0 }] : prev);
+    const moved = [...queue, ...sittingOut].find(x => x.id === id); if (!moved) return;
+    setQueue(prev => prev.filter(x => x.id !== id));
+    setSittingOut(prev => prev.filter(x => x.id !== id));
+    setInjured(prev => prev.some(x => x.id === id) ? prev : [...prev, { ...moved, winStreak: 0 }]);
   });
   const leaveWaiting = withAdmin(id => {
-    let moved = null;
-    setQueue(prev => { const f = prev.find(x => x.id === id); if (f) moved = f; return prev.filter(x => x.id !== id); });
-    setSittingOut(prev => { if (!moved) { const f = prev.find(x => x.id === id); if (f) moved = f; } return prev.filter(x => x.id !== id); });
-    setInjured(prev => { if (!moved) { const f = prev.find(x => x.id === id); if (f) moved = f; } return prev.filter(x => x.id !== id); });
-    if (moved) setLeft(prev => [...prev, { ...moved, leftAtGame: gameCount }]);
+    const moved = [...queue, ...sittingOut, ...injured].find(x => x.id === id); if (!moved) return;
+    setQueue(prev => prev.filter(x => x.id !== id));
+    setSittingOut(prev => prev.filter(x => x.id !== id));
+    setInjured(prev => prev.filter(x => x.id !== id));
+    setLeft(prev => prev.some(x => x.id === id) ? prev : [...prev, { ...moved, leftAtGame: gameCount }]);
   });
   const rejoinLeft = withAdmin(id => {
-    let moved = null;
-    setLeft(prev => { moved = prev.find(x => x.id === id) || null; return prev.filter(x => x.id !== id); });
-    setQueue(prev => moved ? sortQueue([...prev, { ...moved, hasPlayed: true, roundsWaited: gameCount - (moved.leftAtGame || gameCount) }]) : prev);
+    const moved = left.find(x => x.id === id); if (!moved) return;
+    setLeft(prev => prev.filter(x => x.id !== id));
+    setQueue(prev => prev.some(x => x.id === id) ? prev : sortQueue([...prev, { ...moved, hasPlayed: true, roundsWaited: gameCount - (moved.leftAtGame || gameCount) }]));
   });
   const removeLeft = withAdmin(id => setLeft(prev => prev.filter(x => x.id !== id)));
 
@@ -1374,7 +1375,14 @@ function AppInner() {
 
   // result
   const saveSnap = () => setHistory(prev => [...prev, { teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult }]);
-  const undo = withAdmin(() => { if (!history.length) return; const p = history[history.length - 1]; setTeamA(p.teamA); setTeamB(p.teamB); setQueue(p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setHistory(h => h.slice(0, -1)); });
+  const undo = withAdmin(() => {
+    if (!history.length) return;
+    const p = history[history.length - 1];
+    // Undo rewinds the roster to just before the last result. Anyone who signed
+    // up AFTER that snapshot isn't in it, so without this they'd silently vanish.
+    const snapIds = new Set([...p.teamA, ...p.teamB, ...p.queue, ...p.sittingOut, ...(p.injured || []), ...p.left].map(x => x.id));
+    const newcomers = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left].filter(x => !snapIds.has(x.id));
+    setTeamA(p.teamA); setTeamB(p.teamB); setQueue(newcomers.length ? sortQueue([...p.queue, ...newcomers]) : p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setHistory(h => h.slice(0, -1)); });
 
   const recordResult = winnerIsA => {
     const winner = winnerIsA ? teamA : teamB, loser = winnerIsA ? teamB : teamA;
