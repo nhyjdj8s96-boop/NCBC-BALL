@@ -778,9 +778,9 @@ function AppInner() {
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState([]);
 
-  const [subModal, setSubModal] = useState(null);
-  const [subPickerModal, setSubPickerModal] = useState(null);
   const [playerActionModal, setPlayerActionModal] = useState(null);
+  // One-sheet player menu: view = "main" | "pick"; chosen = a specific replacement (null = next in line); beforeTip = quick break doesn't count this game
+  const [pamUi, setPamUi] = useState({ view: "main", chosen: null, beforeTip: false });
   const [rowActionModal, setRowActionModal] = useState(null); // { player, zone: "queue" | "sitting" | "injured" | "left" }
   const [lastWinner, setLastWinner] = useState(null);
   const [animKey, setAnimKey] = useState(0);
@@ -1216,7 +1216,7 @@ function AppInner() {
     setTeamA([]); setTeamB([]); setQueue([]); setSittingOut([]); setInjured([]); setLeft([]);
     setGameCount(1); setLastResult(null); setHistory([]);
     setSetupPlayers([]); setJoinCounter(0); setNameInput("");
-    setSubModal(null); setLastWinner(null); setMoveConfirm(null);
+    setPlayerActionModal(null); setLastWinner(null); setMoveConfirm(null);
     setTimerSeconds(TIMER_DURATION); setTimerRunning(false); setTimerDone(false);
     setSessionSummary(null);
     setView(VIEWS.SETUP);
@@ -1298,7 +1298,6 @@ function AppInner() {
     const tick = (subbed.winStreak || 0) === 0;
     if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
     else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
-    setSubModal(null);
   });
 
   // Injured players go to their own dedicated list — never auto-pulled as
@@ -1315,13 +1314,12 @@ function AppInner() {
     setInjured(prev => [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...hurt, hasPlayed: true, gamesPlayed: (hurt.gamesPlayed || 0) + 1, winStreak: 0 }]);
     if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
     else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
-    setSubModal(null);
   });
 
-  const leaveFromCourt = withAdmin((playerId, isTeamA) => {
+  const leaveFromCourt = withAdmin((playerId, isTeamA, incOverride) => {
     const team = isTeamA ? teamA : teamB;
     const leaving = team.find(x => x.id === playerId); if (!leaving) return;
-    const inc = getIncoming();
+    const inc = incOverride || getIncoming();
     if (!inc) { window.alert(leaving.name + " can't leave — nobody waiting to sub in."); return; }
     const fromQ = queue.some(x => x.id === inc.id);
     if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); }
@@ -1336,10 +1334,10 @@ function AppInner() {
   // "it was my turn, I just need one more game of rest." They keep their
   // earned priority: no gamesPlayed charge, roundsWaited preserved and
   // still aging, so they're at the front of the line when they're ready.
-  const preGameSitOut = withAdmin((playerId, isTeamA) => {
+  const preGameSitOut = withAdmin((playerId, isTeamA, incOverride) => {
     const team = isTeamA ? teamA : teamB;
     const stepping = team.find(x => x.id === playerId); if (!stepping) return;
-    const inc = getIncoming(); if (!inc) return;
+    const inc = incOverride || getIncoming(); if (!inc) return;
     const fromQ = queue.some(x => x.id === inc.id);
     if (fromQ) { setQueue(prev => prev.filter(x => x.id !== inc.id)); }
     else { setSittingOut(prev => prev.filter(x => x.id !== inc.id)); }
@@ -1653,13 +1651,31 @@ function AppInner() {
   const guestCount = allTonight.filter(p => p.isGuest).length;
   const memberCount = totalTonight - guestCount;
   const sortedQ = sortQueue(queue);
-  const subbing = subModal ? [...teamA, ...teamB].find(p => p.id === subModal.playerId) : null;
-  const subPickerOutgoing = subPickerModal ? [...teamA, ...teamB].find(p => p.id === subPickerModal.playerId) : null;
-  const subPickerOutgoingName = subPickerOutgoing ? subPickerOutgoing.name : "the player";
-  const subNext = getIncoming();
-  const hasPool = sortQueue([...queue, ...sittingOut]).length > 0;
+  const pool = sortQueue([...queue, ...sittingOut]);
   const pam = playerActionModal;
   const pamNext = pam ? getIncoming() : null;
+  const pamIncoming = pam ? (pamUi.chosen || pamNext) : null;
+  const openPam = (player, isTeamA) => {
+    setPamUi({ view: "main", chosen: null, beforeTip: !(timerRunning || timerDone || timerSeconds < TIMER_DURATION) });
+    setPlayerActionModal({ player, isTeamA });
+  };
+  // One entry point for every way a court player can come off.
+  const pamDo = kind => {
+    if (!pam || !pamIncoming) return;
+    const { player, isTeamA } = pam;
+    const chosen = pamUi.chosen;
+    setPlayerActionModal(null);
+    if (kind === "quick") {
+      if (pamUi.beforeTip) preGameSitOut(player.id, isTeamA, chosen);
+      else if (chosen) subInSpecific(chosen, player.id, isTeamA, false);
+      else regularSub(player.id, isTeamA);
+    } else if (kind === "hurt") {
+      if (chosen) subInSpecific(chosen, player.id, isTeamA, true);
+      else injurySub(player.id, isTeamA);
+    } else {
+      leaveFromCourt(player.id, isTeamA, chosen);
+    }
+  };
   const ram = rowActionModal;
   const ramPlayer = ram ? ram.player : null;
   const ramZone = ram ? ram.zone : null;
@@ -1669,137 +1685,64 @@ function AppInner() {
     <div style={{ ...s.root, paddingBottom: 110 }}>
       <ConfirmModal moveConfirm={moveConfirm} setMoveConfirm={setMoveConfirm} />
 
-      {subModal && isAdmin && !subPickerModal && (
-        <div style={s.overlay} onClick={() => setSubModal(null)}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <div style={s.modalGrabber} />
-            <p style={s.modalTitle}>Sub out {subbing ? subbing.name : ""}</p>
-            <p style={s.modalDesc}>Game is in progress — this counts as a real sub</p>
-
-            {subNext ? (
-              <div style={s.subIncomingCard}>
-                <span style={s.subIncomingLabel}>Coming in</span>
-                <span style={s.subIncomingName}>{subNext.name}</span>
-                <span style={s.subIncomingMeta}>{(subNext.gamesPlayed || 0)} games played - sat {subNext.roundsWaited}</span>
-              </div>
-            ) : (
-              <p style={s.modalDesc}>🪑 Nobody waiting to sub in</p>
-            )}
-
-            {subNext && (
-              <div style={s.subReasonRow}>
-                <button style={s.subReasonBtn} onClick={() => regularSub(subModal.playerId, subModal.isTeamA)}>
-                  <span style={s.subReasonEmoji}>😮‍💨</span>
-                  <span style={s.subReasonLabel}>Needs a break</span>
-                </button>
-                <button style={s.subReasonBtnInjury} onClick={() => injurySub(subModal.playerId, subModal.isTeamA)}>
-                  <span style={s.subReasonEmoji}>🤕</span>
-                  <span style={s.subReasonLabel}>Injury</span>
-                </button>
-              </div>
-            )}
-
-            <button
-              style={{ ...s.btnSecondary, ...(hasPool ? {} : s.btnDisabled) }}
-              disabled={!hasPool}
-              onClick={() => hasPool && setSubPickerModal({ playerId: subModal.playerId, isTeamA: subModal.isTeamA })}
-            >
-              🎯 Choose who subs in <span style={s.hintSm}>{hasPool ? "pick anyone from the queue or sitting out" : "no one else available right now"}</span>
-            </button>
-
-            <button style={s.btnCancel} onClick={() => setSubModal(null)}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {subPickerModal && isAdmin && !subPickerModal.chosen && (
-        <div style={s.overlay} onClick={() => { setSubPickerModal(null); setSubModal(null); }}>
-          <div style={{ ...s.modal, maxHeight: "80vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-            <p style={s.modalTitle}>Who's coming in?</p>
-            <p style={s.modalDesc}>Sorted by priority - hotter color = waited longer</p>
-            <div style={s.subPickList}>
-              {sortQueue([...queue, ...sittingOut]).map((p, i) => {
-                const heat = waitHeat(p.roundsWaited);
-                return (
-                  <button key={p.id} style={{ ...s.subPickRow, background: heat.background === "transparent" ? COLOR.tertiarySystemBackground : heat.background }} onClick={() => setSubPickerModal(prev => ({ ...prev, chosen: p }))}>
-                    <span style={s.subPickRank}>{i + 1}</span>
-                    <span style={s.subPickName}>{p.name}</span>
-                    <span style={{ ...s.subPickMeta, color: heat.color, fontWeight: 600 }}>sat {p.roundsWaited || 0} - {p.gamesPlayed || 0}GP</span>
-                  </button>
-                );
-              })}
-            </div>
-            <button style={s.btnCancel} onClick={() => { setSubPickerModal(null); setSubModal(null); }}>Cancel</button>
-          </div>
-        </div>
-      )}
-
-      {subPickerModal && isAdmin && subPickerModal.chosen && (
-        <div style={s.overlay} onClick={() => { setSubPickerModal(null); setSubModal(null); }}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
-            <div style={s.modalGrabber} />
-            <p style={s.modalTitle}>{subPickerModal.chosen.name} comes in</p>
-            <p style={s.modalDesc}>Why is {subPickerOutgoingName} coming out?</p>
-            <div style={s.subReasonRow}>
-              <button style={s.subReasonBtn} onClick={() => { subInSpecific(subPickerModal.chosen, subPickerModal.playerId, subPickerModal.isTeamA, false); setSubPickerModal(null); setSubModal(null); }}>
-                <span style={s.subReasonEmoji}>😮‍💨</span>
-                <span style={s.subReasonLabel}>Needs a break</span>
-              </button>
-              <button style={s.subReasonBtnInjury} onClick={() => { subInSpecific(subPickerModal.chosen, subPickerModal.playerId, subPickerModal.isTeamA, true); setSubPickerModal(null); setSubModal(null); }}>
-                <span style={s.subReasonEmoji}>🤕</span>
-                <span style={s.subReasonLabel}>Injury</span>
-              </button>
-            </div>
-            <button style={s.btnCancel} onClick={() => setSubPickerModal(prev => ({ ...prev, chosen: null }))}>Back</button>
-          </div>
-        </div>
-      )}
-
       {pam && isAdmin && (
         <div style={s.overlay} onClick={() => setPlayerActionModal(null)}>
-          <div style={s.modal} onClick={e => e.stopPropagation()}>
+          <div style={{ ...s.modal, maxHeight: "90vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
             <div style={s.modalGrabber} />
-            <p style={s.modalTitle}>{pam.player.name}</p>
-            <p style={s.modalDesc}>{pam.isTeamA ? "Home" : "Away"} - on the court now - {pam.player.gamesPlayed || 0} games played{(pam.player.winStreak || 0) > 0 ? " - " + pam.player.winStreak + " win streak" : ""}</p>
+            {pamUi.view === "pick" ? (
+              <>
+                <p style={s.modalTitle}>Who comes in for {pam.player.name}?</p>
+                <p style={s.modalDesc}>Sorted by priority - hotter color = waited longer</p>
+                <div style={s.subPickList}>
+                  {pool.map((p, i) => {
+                    const heat = waitHeat(p.roundsWaited);
+                    return (
+                      <button key={p.id} style={{ ...s.subPickRow, background: heat.background === "transparent" ? COLOR.tertiarySystemBackground : heat.background }} onClick={() => setPamUi(u => ({ ...u, view: "main", chosen: i === 0 ? null : p }))}>
+                        <span style={s.subPickRank}>{i + 1}</span>
+                        <span style={s.subPickName}>{p.name}</span>
+                        <span style={{ ...s.subPickMeta, color: heat.color, fontWeight: 600 }}>sat {p.roundsWaited || 0} - {p.gamesPlayed || 0}GP</span>
+                      </button>
+                    );
+                  })}
+                </div>
+                <button style={s.btnCancel} onClick={() => setPamUi(u => ({ ...u, view: "main" }))}>Back</button>
+              </>
+            ) : (
+              <>
+                <p style={s.modalTitle}>{pam.player.name}</p>
+                <p style={s.modalDesc}>{pam.isTeamA ? "Home" : "Away"} - {pam.player.gamesPlayed || 0} games played{(pam.player.winStreak || 0) > 0 ? " - " + pam.player.winStreak + " win streak" : ""}</p>
 
-            <button style={s.btnPrimary} onClick={() => {
-              setPlayerActionModal(null);
-              if (!pamNext) { setMoveConfirm({ title: "No one to sub in", desc: "Add players to the queue first.", actions: [] }); return; }
-              setMoveConfirm({
-                title: pam.player.name + " sitting before this game even starts?",
-                desc: pamNext.name + " takes the spot. " + pam.player.name + " sits out just this one game and is guaranteed back on the court next game — no games/streak impact at all.",
-                actions: [{ label: "Yes, swap before tip-off", style: "primary", fn: () => preGameSitOut(pam.player.id, pam.isTeamA) }],
-              });
-            }}>
-              🕐 Not ready yet <span style={s.hint}>sits ONE game only - guaranteed back next</span>
-            </button>
+                <div style={s.pamCard}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={s.pamCardLabel}>Coming in</div>
+                    <div style={s.pamCardName}>{pamIncoming ? pamIncoming.name : "Nobody waiting"}</div>
+                    <div style={s.pamCardNote}>{pamIncoming ? (pamUi.chosen ? "You picked this player" : "Next in line - sat " + (pamIncoming.roundsWaited || 0)) : "Add a player to the queue first"}</div>
+                  </div>
+                  {pool.length > 1 && <button style={s.pamChange} onClick={() => setPamUi(u => ({ ...u, view: "pick" }))}>Change</button>}
+                </div>
 
-            <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSubModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
-              🔄 Sub out — next in queue <span style={s.hint}>{pamNext ? pamNext.name + " comes in now" : "nobody waiting"} - game is already in progress</span>
-            </button>
+                <button style={{ ...s.pamQuick, ...(pamIncoming ? {} : s.btnDisabled) }} disabled={!pamIncoming} onClick={() => pamDo("quick")}>
+                  <span style={s.pamReasonLabel}>Quick break</span>
+                  <span style={{ ...s.pamReasonSub, color: "rgba(255,255,255,0.85)" }}>Sits one game, then comes back automatically</span>
+                </button>
+                <button style={{ ...s.pamHurt, ...(pamIncoming ? {} : s.btnDisabled) }} disabled={!pamIncoming} onClick={() => pamDo("hurt")}>
+                  <span style={s.pamReasonLabel}>Hurt</span>
+                  <span style={s.pamReasonSub}>Out until you bring them back</span>
+                </button>
+                <button style={{ ...s.pamDone, ...(pamIncoming ? {} : s.btnDisabled) }} disabled={!pamIncoming} onClick={() => pamDo("done")}>
+                  <span style={s.pamReasonLabel}>Done for the day</span>
+                  <span style={s.pamReasonSub}>Moves to the Left list</span>
+                </button>
 
-            <button
-              style={{ ...s.btnPrimary, ...(hasPool ? {} : s.btnDisabled) }}
-              disabled={!hasPool}
-              onClick={() => { if (!hasPool) return; setPlayerActionModal(null); setSubPickerModal({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}
-            >
-              🎯 Sub out — pick someone <span style={s.hint}>{hasPool ? "choose exactly who comes in" : "no one else available"}</span>
-            </button>
+                <button style={s.pamTip} onClick={() => setPamUi(u => ({ ...u, beforeTip: !u.beforeTip }))}>
+                  {pamUi.beforeTip ? "Game hasn't started - Quick break won't count this game. Tap to change." : "Game in progress - Quick break counts this game. Tap to change."}
+                </button>
 
-            <button style={s.btnPrimary} onClick={() => { setPlayerActionModal(null); setSwapPicker({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>
-              🔀 Swap teams <span style={s.hint}>trade with someone on {pam.isTeamA ? "Away" : "Home"}</span>
-            </button>
-
-            <div style={s.manageDivider} />
-
-            <button style={s.btnWarning} onClick={() => {
-              setPlayerActionModal(null);
-              if (!pamNext) { setMoveConfirm({ title: "No one to sub in", desc: "Add players to the queue first.", actions: [] }); return; }
-              setMoveConfirm({ title: pam.player.name + " is done for the day?", desc: pamNext.name + " subs in. " + pam.player.name + " moves to Left.", actions: [{ label: "Yes, done for the day", style: "warning", fn: () => leaveFromCourt(pam.player.id, pam.isTeamA) }] });
-            }}>
-              🚪 Leave for the day <span style={s.hint}>{pamNext ? pamNext.name + " fills the spot" : "nobody waiting"}</span>
-            </button>
-            <button style={s.btnCancel} onClick={() => setPlayerActionModal(null)}>Cancel</button>
+                <div style={s.manageDivider} />
+                <button style={s.pamLink} onClick={() => { setPlayerActionModal(null); setSwapPicker({ playerId: pam.player.id, isTeamA: pam.isTeamA }); }}>Swap teams instead</button>
+                <button style={s.btnCancel} onClick={() => setPlayerActionModal(null)}>Cancel</button>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -2012,7 +1955,7 @@ function AppInner() {
           </div>
           {teamA.map((p, i, arr) => (
             <CourtRow key={p.id} player={p} isAdmin={isAdmin} isLast={i === arr.length - 1}
-              onTap={() => setPlayerActionModal({ player: p, isTeamA: true })} />
+              onTap={() => openPam(p, true)} />
           ))}
         </div>
         <div style={s.vsCircle}><span style={s.vsText}>VS</span></div>
@@ -2023,7 +1966,7 @@ function AppInner() {
           </div>
           {teamB.map((p, i, arr) => (
             <CourtRow key={p.id} player={p} isAdmin={isAdmin} isLast={i === arr.length - 1}
-              onTap={() => setPlayerActionModal({ player: p, isTeamA: false })} />
+              onTap={() => openPam(p, false)} />
           ))}
         </div>
       </div>
@@ -2259,6 +2202,18 @@ function buildS() {
   tabItemActive: { color: COLOR.tint },
   tabLabel: { fontSize: 11, fontWeight: 600 },
   tabBadge: { position: "absolute", top: -4, right: -10, minWidth: 18, height: 18, borderRadius: 9, boxSizing: "border-box", padding: "0 5px", background: COLOR.tint, color: "#fff", fontSize: 11, fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center" },
+  pamCard: { display: "flex", alignItems: "center", gap: 12, width: "100%", boxSizing: "border-box", padding: "12px 14px", margin: "4px 0 12px", borderRadius: RADIUS.md, background: COLOR.tertiarySystemBackground },
+  pamCardLabel: { fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: COLOR.secondaryLabel },
+  pamCardName: { fontSize: 20, fontWeight: 700, color: COLOR.label, marginTop: 2 },
+  pamCardNote: { fontSize: 13, color: COLOR.secondaryLabel, marginTop: 2 },
+  pamChange: { minHeight: 44, padding: "0 18px", border: "none", borderRadius: 22, background: COLOR.systemBackground, color: COLOR.tint, fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", boxShadow: "0 1px 3px rgba(0,0,0,0.12)" },
+  pamQuick: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", minHeight: 64, padding: "10px 16px", marginBottom: 10, border: "none", borderRadius: RADIUS.md, background: "#0A62D0", color: "#fff", textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
+  pamHurt: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", minHeight: 64, padding: "10px 16px", marginBottom: 10, border: "none", borderRadius: RADIUS.md, background: COLOR.dangerSubtleBg, color: COLOR === COLOR_DARK ? COLOR.danger : "#B3261E", textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
+  pamDone: { display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2, width: "100%", minHeight: 64, padding: "10px 16px", border: "none", borderRadius: RADIUS.md, background: COLOR.tertiarySystemBackground, color: COLOR.label, textAlign: "left", cursor: "pointer", fontFamily: "inherit" },
+  pamReasonLabel: { fontSize: 17, fontWeight: 700 },
+  pamReasonSub: { fontSize: 13, opacity: 0.85 },
+  pamTip: { display: "block", width: "100%", margin: "12px 0 0", padding: "8px 4px", border: "none", background: "none", color: COLOR.secondaryLabel, fontSize: 12, lineHeight: 1.4, textAlign: "center", cursor: "pointer", fontFamily: "inherit" },
+  pamLink: { display: "block", width: "100%", minHeight: 48, border: "none", background: "none", color: COLOR.tint, fontSize: 16, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" },
   railWrap: { margin: "16px 0 0" },
   railHeader: { display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 20px 8px", fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: COLOR.secondaryLabel },
   rail: { display: "flex", gap: 8, padding: "0 16px 4px", overflowX: "auto", WebkitOverflowScrolling: "touch" },

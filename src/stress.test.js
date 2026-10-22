@@ -51,6 +51,52 @@ async function run(N, mode, games, seed, undoRate = 0) {
   return result;
 }
 
+
+async function runSubs(N, steps, seed) {
+  localStorage.clear();
+  const players = Array.from({ length: N }, mk);
+  localStorage.setItem("local_ncbc-main", JSON.stringify({ view: "setup", teamSize: 5, gameMode: "rotate", setupPlayers: players, joinCounter: N, teamA: [], teamB: [], queue: [], sittingOut: [], injured: [], left: [], gameCount: 0, lastResult: null, history: [], timerRunning: false, timerDone: false, endTime: null, pausedSecondsLeft: 480 }));
+  const rnd = mulberry(seed);
+  const { unmount } = render(<App />);
+  fireEvent.click(await screen.findByText(/Run It/, {}, { timeout: 8000 }));
+  const violations = []; const counts = { win: 0, quick: 0, hurt: 0, done: 0, change: 0 };
+  for (let i = 0; i < steps; i++) {
+    let st = read();
+    const poolSize = st.queue.length + st.sittingOut.length;
+    const r = rnd();
+    if (r < 0.5 || poolSize < 2) {
+      fireEvent.click(await screen.findByText(rnd() < 0.5 ? /Home Wins/ : /Away Wins/)); counts.win++;
+    } else {
+      const court = [...st.teamA, ...st.teamB];
+      const who = court[Math.floor(rnd() * court.length)];
+      const row = screen.getAllByText(who.name).find(e => e.parentElement && String(e.parentElement.className).includes("native-row"));
+      fireEvent.click(row);
+      await screen.findByText("Coming in");
+      if (rnd() < 0.3 && poolSize > 1) {
+        fireEvent.click(screen.getByText("Change"));
+        const rows = await screen.findAllByText(/GP$/);
+        fireEvent.click(rows[1 + Math.floor(rnd() * (rows.length - 1))]);
+        await screen.findByText("Coming in"); counts.change++;
+      }
+      const pick = rnd();
+      if (pick < 0.6) { fireEvent.click(screen.getByText("Quick break")); counts.quick++; }
+      else if (pick < 0.85) { fireEvent.click(screen.getByText("Hurt")); counts.hurt++; }
+      else if (st.left.length < 2) { fireEvent.click(screen.getByText("Done for the day")); counts.done++; }
+      else { fireEvent.click(screen.getByText("Cancel")); }
+    }
+    st = read();
+    const all = [...st.teamA, ...st.teamB, ...st.queue, ...st.sittingOut, ...st.injured, ...st.left];
+    const ids = all.map(p => p.id);
+    if (new Set(ids).size !== ids.length) violations.push("step " + i + ": duplicate player");
+    if (ids.length !== N) violations.push("step " + i + ": count " + ids.length + " != " + N);
+    if (st.teamA.length !== 5 || st.teamB.length !== 5) violations.push("step " + i + ": team sizes " + st.teamA.length + "/" + st.teamB.length);
+    if (JSON.stringify(st).includes("undefined")) violations.push("step " + i + ": undefined in state");
+    if (screen.queryByText("Coming in")) violations.push("step " + i + ": sheet left open");
+  }
+  unmount(); cleanup();
+  return { N, steps, counts, violationCount: violations.length, violations: violations.slice(0, 5) };
+}
+
 const results = [];
 afterAll(() => { console.log("STRESS RESULTS\n" + results.map(r => JSON.stringify(r)).join("\n")); });
 
@@ -62,6 +108,11 @@ describe("stress", () => {
     results.push(r);
     expect(r.violationCount).toBe(0);
   }, 120000);
+  test.each([[14, 11], [18, 23], [24, 37]])("one-sheet subs: N=%i", async (N, seed) => {
+    const r = await runSubs(N, 120, seed);
+    results.push({ ...r, subs: true });
+    expect(r.violationCount).toBe(0);
+  }, 180000);
   test.each([[10, "rotate"], [12, "rotate"], [24, "rotate"], [24, "king"]])("with random Undo: N=%i mode=%s", async (N, mode) => {
     const r = await run(N, mode, 150, N * 97, 0.15);
     results.push({ ...r, undo: true });
