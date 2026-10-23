@@ -378,6 +378,73 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
   );
 }
 
+// Draws the end-of-night recap as a 1080x1080 square image (for sharing).
+function renderWrapCanvas(sm, dateStr, logo) {
+  const W = 1080;
+  const c = document.createElement("canvas"); c.width = W; c.height = W;
+  const g = c.getContext("2d");
+  const FONT = "-apple-system, 'SF Pro Display', 'Inter', 'Helvetica Neue', Arial, sans-serif";
+  const gold = "#FFC24D", dim = "rgba(255,255,255,0.68)";
+  const bg = g.createLinearGradient(0, 0, W * 0.5, W);
+  bg.addColorStop(0, "#0E1B38"); bg.addColorStop(0.55, "#1B3566"); bg.addColorStop(1, "#0E1B38");
+  g.fillStyle = bg; g.fillRect(0, 0, W, W);
+  const fit = (txt, maxW) => { if (g.measureText(txt).width <= maxW) return txt; let s2 = txt; while (s2.length > 1 && g.measureText(s2 + "…").width > maxW) s2 = s2.slice(0, -1); return s2 + "…"; };
+  const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  // header: logo (white) + titles on the left, big numbers on the right
+  if (logo) {
+    const o = document.createElement("canvas"); o.width = 120; o.height = 120;
+    const og = o.getContext("2d"); og.drawImage(logo, 0, 0, 120, 120); og.globalCompositeOperation = "source-in"; og.fillStyle = "#fff"; og.fillRect(0, 0, 120, 120);
+    g.drawImage(o, 50, 44, 120, 120);
+  }
+  g.textBaseline = "alphabetic"; g.textAlign = "left";
+  g.fillStyle = gold; g.font = "700 22px " + FONT; g.fillText("NEW COVENANT BAPTIST CHURCH", 192, 84);
+  g.fillStyle = "#fff"; g.font = "900 56px " + FONT; g.fillText("Monday Night Ball", 190, 140);
+  g.fillStyle = dim; g.font = "500 28px " + FONT; g.fillText(dateStr, 192, 182);
+  // stats
+  const stat = (num, label, cx) => { g.textAlign = "center"; g.fillStyle = gold; g.font = "900 84px " + FONT; g.fillText(String(num), cx, 138); g.fillStyle = dim; g.font = "700 18px " + FONT; g.fillText(label, cx, 168); };
+  stat(sm.totalGames, "GAMES", 800); stat(sm.playerCount, "BALLERS", 940);
+  g.textAlign = "left";
+  // awards
+  const short = list => list.length > 3 ? list.slice(0, 3).map(p => p.name).join(", ") + " +" + (list.length - 3) : list.map(p => p.name).join(", ");
+  const rec = p => (p.wins || 0) + "-" + ((p.gamesPlayed || 0) - (p.wins || 0));
+  const awards = [
+    sm.mostWins.length > 0 && ["MOST WINS", short(sm.mostWins), String(sm.mostWins[0].wins || 0)],
+    sm.bestWinPct.length > 0 && ["BEST RECORD", short(sm.bestWinPct), rec(sm.bestWinPct[0])],
+    sm.mostGames.length > 0 && ["MOST GAMES", short(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
+    sm.mostLosses.length > 0 && ["MOST LOSSES", short(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
+    sm.worstWinPct.length > 0 && ["WORST RECORD", short(sm.worstWinPct), rec(sm.worstWinPct[0])],
+  ].filter(Boolean);
+  const aTop = 232, aRow = 70;
+  if (awards.length) {
+    g.fillStyle = "rgba(255,255,255,0.09)"; rr(50, aTop, W - 100, awards.length * aRow + 12, 28); g.fill();
+    awards.forEach(([label, who, val], i) => {
+      const y = aTop + 6 + i * aRow;
+      if (i) { g.fillStyle = "rgba(255,255,255,0.15)"; g.fillRect(84, y, W - 168, 1.5); }
+      g.fillStyle = dim; g.font = "700 20px " + FONT; g.textAlign = "left"; g.fillText(label, 84, y + 28);
+      g.fillStyle = "#fff"; g.font = "800 32px " + FONT; g.fillText(fit(who, 700), 84, y + 58);
+      g.fillStyle = gold; g.font = "900 40px " + FONT; g.textAlign = "right"; g.fillText(val, W - 84, y + 46);
+    });
+  }
+  g.textAlign = "left";
+  // players
+  const pTop = aTop + awards.length * aRow + 12 + 40;
+  g.fillStyle = dim; g.font = "700 20px " + FONT; g.fillText("THE RUN  (W-L)" + (sm.guests.length ? "     \u{1F44B} = GUEST" : ""), 54, pTop);
+  const list = sm.players, cols = 3, colW = (W - 100 - 2 * 28) / cols;
+  const rows = Math.max(1, Math.ceil(list.length / cols));
+  const avail = W - 40 - (pTop + 14);
+  const rowH = Math.min(52, avail / rows), fs = Math.max(18, Math.min(30, rowH * 0.56));
+  list.forEach((p, i) => {
+    const col = Math.floor(i / rows), row = i % rows;
+    const x = 50 + col * (colW + 28), y = pTop + 14 + row * rowH;
+    g.fillStyle = "rgba(255,255,255,0.14)"; g.fillRect(x, y + rowH - 1, colW, 1.5);
+    g.fillStyle = dim; g.font = "700 " + Math.round(fs * 0.8) + "px " + FONT; g.textAlign = "right"; g.fillText(rec(p), x + colW, y + rowH * 0.7);
+    const rw = g.measureText(rec(p)).width;
+    g.fillStyle = "#fff"; g.font = "700 " + Math.round(fs) + "px " + FONT; g.textAlign = "left";
+    g.fillText(fit(p.name + (p.isGuest ? " \u{1F44B}" : ""), colW - rw - 14), x, y + rowH * 0.7);
+  });
+  return c;
+}
+
 function JoinSheet({ taken, fullRoster, addPlayer, onClose }) {
   const [q, setQ] = useState("");
   const listRef = useRef(null);
@@ -1179,7 +1246,7 @@ function AppInner() {
   };
 
   const [sessionSummary, setSessionSummary] = useState(null);
-  const [wrapClean, setWrapClean] = useState(false);
+  const [wrapImg, setWrapImg] = useState(null); // { url, blob }
 
   // Step 1: compute the night's story and show it (no wipe yet)
   const endSession = () => {
@@ -1243,6 +1310,32 @@ function AppInner() {
   };
 
   // Step 2: actually wipe everything after the summary is dismissed
+  // Build the square recap image whenever the end-of-night summary opens.
+  useEffect(() => {
+    if (!sessionSummary) { setWrapImg(null); return undefined; }
+    let alive = true, objUrl = null;
+    const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const draw = logo => {
+      if (!alive) return;
+      try {
+        renderWrapCanvas(sessionSummary, dateStr, logo).toBlob(blob => {
+          if (!alive || !blob) return;
+          objUrl = URL.createObjectURL(blob); setWrapImg({ url: objUrl, blob });
+        }, "image/png");
+      } catch (e) { console.error("Recap image error:", e); }
+    };
+    const im = new Image(); im.onload = () => draw(im); im.onerror = () => draw(null); im.src = NCBC_LOGO;
+    return () => { alive = false; if (objUrl) URL.revokeObjectURL(objUrl); };
+  }, [sessionSummary]);
+  const shareRecap = async () => {
+    if (!wrapImg) return;
+    const file = new File([wrapImg.blob], "monday-night-ball.png", { type: "image/png" });
+    try {
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: "Monday Night Ball" }); return; }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    const a = document.createElement("a"); a.href = wrapImg.url; a.download = "monday-night-ball.png"; document.body.appendChild(a); a.click(); a.remove();
+  };
+
   const finishEndSession = () => {
     setTeamA([]); setTeamB([]); setQueue([]); setSittingOut([]); setInjured([]); setLeft([]);
     setGameCount(1); setLastResult(null); setHistory([]);
@@ -1881,72 +1974,18 @@ function AppInner() {
         </div>
       )}
 
-      {sessionSummary && (() => {
-        const sm = sessionSummary;
-        const short = list => list.length > 3 ? list.slice(0, 3).map(p => p.name).join(", ") + " +" + (list.length - 3) : list.map(p => p.name).join(", ");
-        const rec = p => (p.wins || 0) + "-" + ((p.gamesPlayed || 0) - (p.wins || 0));
-        const awards = [
-          sm.mostWins.length > 0 && ["🥇", "Most wins", short(sm.mostWins), String(sm.mostWins[0].wins || 0)],
-          sm.bestWinPct.length > 0 && ["🎯", "Best record", short(sm.bestWinPct), rec(sm.bestWinPct[0])],
-          sm.mostGames.length > 0 && ["🏃", "Most games", short(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
-          sm.mostLosses.length > 0 && ["😬", "Most losses", short(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
-          sm.worstWinPct.length > 0 && ["💀", "Worst record", short(sm.worstWinPct), rec(sm.worstWinPct[0])],
-        ].filter(Boolean);
-        const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
-        const many = sm.players.length > 18;
-        const gold = "#FFC24D";
-        return (
-          <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "linear-gradient(170deg, #0E1B38 0%, #1B3566 55%, #0E1B38 100%)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center" }}
-            onClick={() => setWrapClean(v => !v)}>
-            <div style={{ width: "100%", maxWidth: 480, flex: 1, minHeight: 0, overflowY: "auto", padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
-              <div style={{ textAlign: "center" }}>
-                <img src={NCBC_LOGO} alt="" style={{ width: 46, height: 46, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.18em", color: gold, marginTop: 6 }}>NEW COVENANT BAPTIST CHURCH</div>
-                <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: "-0.02em", marginTop: 2 }}>Monday Night Ball</div>
-                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>{dateStr}</div>
-              </div>
-
-              <div style={{ display: "flex", justifyContent: "center", gap: 36, margin: "16px 0 14px" }}>
-                <div style={{ textAlign: "center" }}><div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1, color: gold }}>{sm.totalGames}</div><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.7)", marginTop: 4 }}>GAMES</div></div>
-                <div style={{ textAlign: "center" }}><div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1, color: gold }}>{sm.playerCount}</div><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.7)", marginTop: 4 }}>BALLERS</div></div>
-              </div>
-
-              {awards.length > 0 && (
-                <div style={{ background: "rgba(255,255,255,0.09)", borderRadius: 16, padding: "6px 14px" }}>
-                  {awards.map(([icon, label, who, val], i) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: i ? "0.5px solid rgba(255,255,255,0.15)" : "none" }}>
-                      <span style={{ width: 22, textAlign: "center", fontSize: 17 }}>{icon}</span>
-                      <span style={{ flex: 1, minWidth: 0 }}>
-                        <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "rgba(255,255,255,0.6)", textTransform: "uppercase" }}>{label}</span>
-                        <span style={{ display: "block", fontSize: 16, fontWeight: 700, wordBreak: "break-word" }}>{who}</span>
-                      </span>
-                      <span style={{ fontSize: 18, fontWeight: 800, color: gold }}>{val}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.6)", margin: "16px 2px 6px" }}>THE RUN (W-L){sm.guests.length > 0 ? "   👋 GUEST" : ""}</div>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 18 }}>
-                {sm.players.map(p => (
-                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: many ? "4px 0" : "5px 0", borderBottom: "0.5px solid rgba(255,255,255,0.12)", fontSize: many ? 13 : 14 }}>
-                    <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.isGuest ? " 👋" : ""}</span>
-                    <span style={{ color: "rgba(255,255,255,0.7)", fontVariantNumeric: "tabular-nums" }}>{rec(p)}</span>
-                  </div>
-                ))}
-              </div>
+      {sessionSummary && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "#0A1226", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+          <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 16, overflow: "hidden", background: "#142549" }}>
+              {wrapImg ? <img src={wrapImg.url} alt="Monday Night Ball recap" style={{ width: "100%", height: "100%", display: "block" }} /> : <div style={{ color: "rgba(255,255,255,0.7)", textAlign: "center", paddingTop: "45%" }}>Making your recap…</div>}
             </div>
-
-            {!wrapClean && (
-              <div style={{ width: "100%", maxWidth: 480, padding: "10px 22px calc(14px + env(safe-area-inset-bottom))", boxSizing: "border-box" }} onClick={e => e.stopPropagation()}>
-                <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>Tap anywhere on the card to hide these buttons, then screenshot</div>
-                <button style={{ width: "100%", height: 50, border: "none", borderRadius: 14, background: gold, color: "#0E1B38", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }} onClick={() => { setWrapClean(false); finishEndSession(); }}>Done — clear session</button>
-                <button style={{ width: "100%", height: 42, marginTop: 4, border: "none", background: "none", color: "rgba(255,255,255,0.8)", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} onClick={() => { setWrapClean(false); setSessionSummary(null); }}>Go back — keep playing</button>
-              </div>
-            )}
+            <button style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: "#FFC24D", color: "#0E1B38", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", opacity: wrapImg ? 1 : 0.5 }} disabled={!wrapImg} onClick={shareRecap}>Share image</button>
+            <button style={{ width: "100%", height: 48, border: "1px solid rgba(255,255,255,0.3)", borderRadius: 14, background: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} onClick={finishEndSession}>Done — clear session</button>
+            <button style={{ width: "100%", height: 40, border: "none", background: "none", color: "rgba(255,255,255,0.75)", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
           </div>
-        );
-      })()}
+        </div>
+      )}
 
       {dupeWarning && (
         <div style={s.overlay} onClick={() => setDupeWarning(null)}>
