@@ -378,31 +378,60 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
   );
 }
 
-function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer, fullRoster, bare }) {
-  const allActive = [...teamA, ...teamB, ...queue, ...sittingOut, ...left];
-  const added = new Set(allActive.map(p => p.name.toLowerCase()));
-  const sk = n => {
-    const parts = n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/);
-    return parts.length > 1 ? parts[parts.length - 1] + " " + parts.slice(0, -1).join(" ") : parts[0];
-  };
-  const all = [...fullRoster].sort((a, b) => sk(a).localeCompare(sk(b)));
-  const anyAvailable = all.some(n => !added.has(n.toLowerCase()));
-  if (!anyAvailable) return bare ? <p style={{ ...s.emptyStateSub, textAlign: "left" }}>Everyone on the list is already in.</p> : null;
+function JoinSheet({ taken, fullRoster, addPlayer, onClose }) {
+  const [q, setQ] = useState("");
+  const listRef = useRef(null);
+  const added = useMemo(() => new Set(taken.map(n => n.toLowerCase())), [taken]);
+  const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
+  const sorted = useMemo(() => [...fullRoster].sort((a, b) => firstName(a).localeCompare(firstName(b)) || a.localeCompare(b)), [fullRoster]);
+  const query = q.trim().toLowerCase();
+  const shown = query ? sorted.filter(n => n.toLowerCase().includes(query)) : sorted;
+  const exact = sorted.some(n => n.toLowerCase() === query);
+  const letters = [...new Set(sorted.map(n => firstName(n)[0].toUpperCase()))];
+  const goTo = L => { const el = listRef.current && listRef.current.querySelector("[data-letter='" + L + "']"); if (el) el.scrollIntoView({ block: "start" }); };
+  const addNew = () => { onClose(); addPlayer(q); };
+  let last = "";
   return (
-    <div style={bare ? { width: "100%" } : s.card}>
-      <p style={s.sectionLabel}>{bare ? "Tap a member to add them" : "On the list, just running late?"}</p>
-      <div style={s.chipGrid}>
-        {all.map(n => {
-          const isIn = added.has(n.toLowerCase());
-          return (
-            <button key={n} style={{ ...s.chip, ...(isIn ? s.chipDone : {}) }} onClick={() => { if (!isIn) addPlayer(n); }}>
-              <span style={{ ...s.chipAvatar, ...(isIn ? s.chipAvatarDone : { background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }) }}>
-                {isIn ? "✓" : nameInitials(n)}
-              </span>
-              <span style={{ ...s.chipName, ...(isIn ? s.chipNameDone : {}) }}>{n}</span>
-            </button>
-          );
-        })}
+    <div style={s.overlay} onClick={onClose}>
+      <div style={{ background: COLOR.systemBackground, borderRadius: RADIUS.lg + "px " + RADIUS.lg + "px 0 0", width: "100%", maxWidth: 480, height: "calc(100% - 60px)", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+        <div style={{ display: "flex", alignItems: "center", padding: "16px 16px 0" }}>
+          <div style={{ width: 70 }} />
+          <div style={{ flex: 1, textAlign: "center", fontSize: 20, fontWeight: 700, color: COLOR.label }}>Join the run</div>
+          <button style={{ width: 70, textAlign: "right", background: "none", border: "none", color: COLOR.tint, fontSize: 17, fontWeight: 600, cursor: "pointer", padding: "8px 0" }} onClick={onClose}>Done</button>
+        </div>
+        <div style={{ padding: "12px 16px 8px" }}>
+          <input style={s.input} placeholder="Search members or type a new name" value={q} onChange={e => setQ(e.target.value)}
+            onKeyDown={e => { if (e.key === "Enter" && query && !exact && shown.length === 0) addNew(); }} />
+        </div>
+        <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
+          <div ref={listRef} style={{ height: "100%", overflowY: "auto", padding: "0 " + (query ? 16 : 40) + "px 24px 16px", boxSizing: "border-box" }}>
+            {shown.map(n => {
+              const L = firstName(n)[0].toUpperCase();
+              const head = !query && L !== last; last = L;
+              const isIn = added.has(n.toLowerCase());
+              return (
+                <div key={n}>
+                  {head && <div data-letter={L} style={{ padding: "12px 4px 4px", fontSize: 13, fontWeight: 700, color: COLOR.secondaryLabel }}>{L}</div>}
+                  <button style={{ width: "100%", minHeight: 52, border: "none", borderBottom: "0.5px solid " + COLOR.separator, background: "transparent", display: "flex", alignItems: "center", textAlign: "left", padding: "0 4px", cursor: isIn ? "default" : "pointer", fontFamily: "inherit", color: isIn ? COLOR.secondaryLabel : COLOR.label }}
+                    onClick={() => { if (!isIn) addPlayer(n); }}>
+                    <span style={{ flex: 1, fontSize: 17, fontWeight: 600 }}>{n}</span>
+                    <span style={{ minWidth: 52, textAlign: "center", padding: "6px 10px", borderRadius: 14, fontSize: 14, fontWeight: 700, background: isIn ? COLOR.successSubtleBg || "#E4F4E8" : COLOR.tertiarySystemBackground, color: isIn ? COLOR.success : COLOR.tint }}>{isIn ? "In" : "Add"}</span>
+                  </button>
+                </div>
+              );
+            })}
+            {query && !exact && (
+              <button style={{ width: "100%", minHeight: 56, marginTop: 8, border: "none", borderRadius: RADIUS.md, background: COLOR.tint, color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} onClick={addNew}>
+                Add "{q.trim()}" as a new name
+              </button>
+            )}
+          </div>
+          {!query && (
+            <div style={{ position: "absolute", right: 6, top: 0, bottom: 16, width: 28, display: "flex", flexDirection: "column", justifyContent: "space-between", alignItems: "center", padding: "6px 0" }}>
+              {letters.map(L => <button key={L} aria-label={"Jump to " + L} style={{ background: "none", border: "none", padding: 0, fontSize: 11, fontWeight: 700, color: COLOR.tint, cursor: "pointer", fontFamily: "inherit", lineHeight: 1 }} onClick={() => goTo(L)}>{L}</button>)}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -2056,18 +2085,7 @@ function AppInner() {
       )}
 
       {isAdmin && joinSheet && (
-        <div style={s.overlay} onClick={() => setJoinSheet(false)}>
-          <div style={{ ...s.modal, alignItems: "stretch" }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 20, fontWeight: 700, textAlign: "center" }}>Join the run</div>
-            <div style={s.row}>
-              <input style={s.input} placeholder="New name" value={nameInput} onChange={e => setNameInput(e.target.value)}
-                onKeyDown={e => { if (e.key === "Enter" && nameInput.trim()) { addPlayer(nameInput); setJoinSheet(false); } }} />
-              <button style={s.addBtn} onClick={() => { if (nameInput.trim()) { addPlayer(nameInput); setJoinSheet(false); } }}>+</button>
-            </div>
-            <LateChips bare teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
-            <button style={s.btnCancel} onClick={() => setJoinSheet(false)}>Done</button>
-          </div>
-        </div>
+        <JoinSheet taken={[...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left].map(p => p.name)} fullRoster={fullRoster} addPlayer={addPlayer} onClose={() => setJoinSheet(false)} />
       )}
 
       {sortedQ.length > 0 ? (
