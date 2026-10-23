@@ -1406,6 +1406,15 @@ function AppInner() {
     setView(VIEWS.SETUP);
   };
 
+  // Hidden self-test hook: only active when the address has ?chaos=1 (see chaosRunner.js).
+  const chaosRef = useRef(null);
+  chaosRef.current = { getState: () => ({ view, gameMode, teamA, teamB, queue, sittingOut, injured, left, setupPlayers, gameCount }), clear: finishEndSession };
+  useEffect(() => {
+    if (typeof window === "undefined" || !/[?&]chaos=1/.test(window.location.search)) return;
+    window.__ncbcChaos = { get: () => chaosRef.current };
+    import("./chaosRunner").then(m => m.mountChaosPanel());
+  }, []);
+
   // queue management
   // Every move below looks the player up from CURRENT state first, then issues
   // plain removes/adds. (The old versions captured the player inside one state
