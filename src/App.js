@@ -1880,53 +1880,57 @@ function AppInner() {
         </div>
       )}
 
-      {sessionSummary && (
-        <div style={s.overlay}>
-          <div style={{ ...s.modal, maxHeight: "85vh", overflowY: "auto" }} onClick={e => e.stopPropagation()}>
-            <img src={NCBC_LOGO} alt="NCBC" style={s.summaryLogo} />
-            <p style={s.modalTitle}>That's a wrap!</p>
-            <div style={s.summaryStatRow}>
-              <div style={s.summaryStat}>
-                <span style={s.summaryStatNum}>{sessionSummary.totalGames}</span>
-                <span style={s.summaryStatLabel}>games played</span>
-              </div>
-              <div style={s.summaryStat}>
-                <span style={s.summaryStatNum}>{sessionSummary.playerCount}</span>
-                <span style={s.summaryStatLabel}>ballers</span>
-              </div>
-            </div>
-            {sessionSummary.mostGames.length > 0 && (
-              <p style={s.summaryHighlight}>🏆 Most games: <b>{sessionSummary.mostGames.map(p => p.name).join(", ")}</b> — <b>{sessionSummary.mostGames[0].gamesPlayed || 0}</b> games</p>
-            )}
-            {sessionSummary.mostWins.length > 0 && (
-              <p style={s.summaryHighlight}>🥇 Most wins: <b>{sessionSummary.mostWins.map(p => p.name).join(", ")}</b> ({sessionSummary.mostWins[0].wins || 0})</p>
-            )}
-            {sessionSummary.mostLosses.length > 0 && (
-              <p style={s.summaryHighlight}>😬 Most losses: <b>{sessionSummary.mostLosses.map(p => p.name).join(", ")}</b> ({(sessionSummary.mostLosses[0].gamesPlayed || 0) - (sessionSummary.mostLosses[0].wins || 0)})</p>
-            )}
-            {sessionSummary.bestWinPct.length > 0 && (
-              <p style={s.summaryHighlight}>🎯 Best record: <b>{sessionSummary.bestWinPct.map(p => p.name).join(", ")}</b> ({sessionSummary.bestWinPct[0].wins || 0}-{(sessionSummary.bestWinPct[0].gamesPlayed || 0) - (sessionSummary.bestWinPct[0].wins || 0)})</p>
-            )}
-            {sessionSummary.worstWinPct.length > 0 && (
-              <p style={s.summaryHighlight}>💀 Worst record: <b>{sessionSummary.worstWinPct.map(p => p.name).join(", ")}</b> ({sessionSummary.worstWinPct[0].wins || 0}-{(sessionSummary.worstWinPct[0].gamesPlayed || 0) - (sessionSummary.worstWinPct[0].wins || 0)})</p>
-            )}
-            {sessionSummary.guests.length > 0 && (
-              <p style={s.summaryHighlight}>👋 Guests: <b>{sessionSummary.guests.map(p => p.name).join(", ")}</b></p>
-            )}
-            <div style={s.summaryList}>
-              {sessionSummary.players.map((p, i) => (
-                <div key={p.id} style={s.summaryRow}>
-                  <span style={s.summaryRank}>{i + 1}</span>
-                  <span style={s.summaryName}>{p.name}</span>
-                  <span style={s.summaryGames}>{p.wins || 0}W-{(p.gamesPlayed || 0) - (p.wins || 0)}L · {p.gamesPlayed || 0} played</span>
+      {sessionSummary && (() => {
+        const sm = sessionSummary;
+        const names = list => list.map(p => p.name).join(", ");
+        const rec = p => (p.wins || 0) + "-" + ((p.gamesPlayed || 0) - (p.wins || 0));
+        const awards = [
+          sm.mostGames.length > 0 && ["Most games", names(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
+          sm.mostWins.length > 0 && ["Most wins", names(sm.mostWins), String(sm.mostWins[0].wins || 0)],
+          sm.mostLosses.length > 0 && ["Most losses", names(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
+          sm.bestWinPct.length > 0 && ["Best record", names(sm.bestWinPct), rec(sm.bestWinPct[0])],
+          sm.worstWinPct.length > 0 && ["Worst record", names(sm.worstWinPct), rec(sm.worstWinPct[0])],
+        ].filter(Boolean);
+        return (
+          <div style={s.overlay}>
+            <div style={{ background: COLOR.systemBackground, borderRadius: RADIUS.lg + "px " + RADIUS.lg + "px 0 0", width: "100%", maxWidth: 480, height: "calc(100% - 40px)", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 20px 12px" }}>
+                <img src={NCBC_LOGO} alt="NCBC" style={{ width: 40, height: 40, objectFit: "contain", flex: "none" }} />
+                <div style={{ flex: 1, minWidth: 0, fontSize: 22, fontWeight: 800, color: COLOR.label }}>That's a wrap!</div>
+                <div style={{ textAlign: "right", lineHeight: 1.2 }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: COLOR.tint }}>{sm.totalGames} game{sm.totalGames === 1 ? "" : "s"}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: COLOR.tint }}>{sm.playerCount} ballers</div>
                 </div>
-              ))}
+              </div>
+              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 20px 12px", borderTop: "0.5px solid " + COLOR.separator }}>
+                {awards.length > 0 && (
+                  <div style={{ padding: "10px 0 6px" }}>
+                    {awards.map(([label, who, val]) => (
+                      <div key={label} style={{ display: "flex", gap: 10, padding: "5px 0", fontSize: 15 }}>
+                        <span style={{ width: 96, flex: "none", color: COLOR.secondaryLabel }}>{label}</span>
+                        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: COLOR.label, wordBreak: "break-word" }}>{who}</span>
+                        <span style={{ flex: "none", fontWeight: 700, color: COLOR.tint }}>{val}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", color: COLOR.secondaryLabel, padding: "10px 0 4px" }}>EVERYONE{sm.guests.length > 0 ? " (👋 = guest)" : ""}</div>
+                {sm.players.map((p, i) => (
+                  <div key={p.id} style={{ ...s.summaryRow, padding: "9px 2px" }}>
+                    <span style={s.summaryRank}>{i + 1}</span>
+                    <span style={s.summaryName}>{p.name}{p.isGuest ? " 👋" : ""}</span>
+                    <span style={s.summaryGames}>{p.wins || 0}-{(p.gamesPlayed || 0) - (p.wins || 0)} · {p.gamesPlayed || 0}g</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ padding: "12px 20px calc(14px + env(safe-area-inset-bottom))", borderTop: "0.5px solid " + COLOR.separator }}>
+                <button style={{ ...s.primaryBtn, width: "100%", margin: 0 }} onClick={finishEndSession}>Done — clear session</button>
+                <button style={{ ...s.btnCancel, marginTop: 4, padding: "10px 16px" }} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
+              </div>
             </div>
-            <button style={{ ...s.primaryBtn, width: "100%", margin: "8px 0 0" }} onClick={finishEndSession}>Done — clear session</button>
-            <button style={s.btnCancel} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {dupeWarning && (
         <div style={s.overlay} onClick={() => setDupeWarning(null)}>
