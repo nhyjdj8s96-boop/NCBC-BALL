@@ -390,57 +390,115 @@ function renderWrapCanvas(sm, dateStr, logo) {
   g.fillStyle = bg; g.fillRect(0, 0, W, W);
   const fit = (txt, maxW) => { if (g.measureText(txt).width <= maxW) return txt; let s2 = txt; while (s2.length > 1 && g.measureText(s2 + "…").width > maxW) s2 = s2.slice(0, -1); return s2 + "…"; };
   const rr = (x, y, w, h, r) => { g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
-  // header: logo (white) + titles on the left, big numbers on the right
-  if (logo) {
-    const o = document.createElement("canvas"); o.width = 120; o.height = 120;
-    const og = o.getContext("2d"); og.drawImage(logo, 0, 0, 120, 120); og.globalCompositeOperation = "source-in"; og.fillStyle = "#fff"; og.fillRect(0, 0, 120, 120);
-    g.drawImage(o, 50, 44, 120, 120);
-  }
+  // White copy of the church logo at a given height (keeps its real proportions).
+  const ar = logo && logo.height ? logo.width / logo.height : 0.76;
+  const whiteLogo = h => {
+    if (!logo) return null;
+    const w = Math.max(1, Math.round(h * ar)); const o = document.createElement("canvas"); o.width = w; o.height = Math.round(h);
+    const og = o.getContext("2d"); og.drawImage(logo, 0, 0, w, o.height); og.globalCompositeOperation = "source-in"; og.fillStyle = "#fff"; og.fillRect(0, 0, w, o.height);
+    return o;
+  };
+  // Small badge before a name: church logo for members, wave for guests.
+  const badge = (p, x, base, h, icon) => {
+    if (p.isGuest) { g.font = "600 " + Math.round(h * 0.9) + "px " + FONT; g.textAlign = "left"; g.fillStyle = "#fff"; g.fillText("\u{1F44B}", x, base); }
+    else if (icon) g.drawImage(icon, x, base - icon.height * 0.88);
+  };
+  const slotW = h => Math.max(Math.round(h * ar), Math.round(h * 1.15)) + 8;
+  // header
+  const big = whiteLogo(120); if (big) g.drawImage(big, 50, 40);
   g.textBaseline = "alphabetic"; g.textAlign = "left";
   g.fillStyle = gold; g.font = "700 22px " + FONT; g.fillText("NEW COVENANT BAPTIST CHURCH", 192, 84);
   g.fillStyle = "#fff"; g.font = "900 56px " + FONT; g.fillText("Monday Night Ball", 190, 140);
   g.fillStyle = dim; g.font = "500 28px " + FONT; g.fillText(dateStr, 192, 182);
-  // stats
   const stat = (num, label, cx) => { g.textAlign = "center"; g.fillStyle = gold; g.font = "900 84px " + FONT; g.fillText(String(num), cx, 138); g.fillStyle = dim; g.font = "700 18px " + FONT; g.fillText(label, cx, 168); };
   stat(sm.totalGames, "GAMES", 800); stat(sm.playerCount, "BALLERS", 940);
   g.textAlign = "left";
-  // awards
-  const short = list => list.length > 3 ? list.slice(0, 3).map(p => p.name).join(", ") + " +" + (list.length - 3) : list.map(p => p.name).join(", ");
+  // awards: every tied name is listed (wrapped onto up to 3 lines), each with its member/guest badge
   const rec = p => (p.wins || 0) + "-" + ((p.gamesPlayed || 0) - (p.wins || 0));
   const awards = [
-    sm.mostWins.length > 0 && ["MOST WINS", short(sm.mostWins), String(sm.mostWins[0].wins || 0)],
-    sm.bestWinPct.length > 0 && ["BEST RECORD", short(sm.bestWinPct), rec(sm.bestWinPct[0])],
-    sm.mostGames.length > 0 && ["MOST GAMES", short(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
-    sm.mostLosses.length > 0 && ["MOST LOSSES", short(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
-    sm.worstWinPct.length > 0 && ["WORST RECORD", short(sm.worstWinPct), rec(sm.worstWinPct[0])],
+    sm.mostWins.length > 0 && ["MOST WINS", sm.mostWins, String(sm.mostWins[0].wins || 0)],
+    sm.bestWinPct.length > 0 && ["BEST RECORD", sm.bestWinPct, rec(sm.bestWinPct[0])],
+    sm.mostGames.length > 0 && ["MOST GAMES", sm.mostGames, String(sm.mostGames[0].gamesPlayed || 0)],
+    sm.mostLosses.length > 0 && ["MOST LOSSES", sm.mostLosses, String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
+    sm.worstWinPct.length > 0 && ["WORST RECORD", sm.worstWinPct, rec(sm.worstWinPct[0])],
   ].filter(Boolean);
-  const aTop = 232, aRow = 70;
-  if (awards.length) {
-    g.fillStyle = "rgba(255,255,255,0.09)"; rr(50, aTop, W - 100, awards.length * aRow + 12, 28); g.fill();
-    awards.forEach(([label, who, val], i) => {
-      const y = aTop + 6 + i * aRow;
+  const NAME_MAX = 780;
+  const layout = (list, fs) => {
+    g.font = "800 " + fs + "px " + FONT;
+    const slot = slotW(fs * 0.85);
+    const lines = [[]]; let x = 0;
+    list.forEach((p, i) => {
+      const w = slot + g.measureText(p.name + (i < list.length - 1 ? "," : "")).width + 18;
+      if (x > 0 && x + w > NAME_MAX) { lines.push([]); x = 0; }
+      lines[lines.length - 1].push({ p, x, w, last: i === list.length - 1 }); x += w;
+    });
+    return { lines, slot };
+  };
+  const maxLines = sm.players.length > 24 ? 1 : 2;
+  const planned = awards.map(([label, list, val]) => {
+    let fs = 32, lineH = 40, L = layout(list, fs);
+    if (L.lines.length > maxLines) { fs = 27; lineH = 34; L = layout(list, fs); }
+    let extra = 0;
+    if (L.lines.length > maxLines) {
+      const keep = L.lines.slice(0, maxLines);
+      const lastLn = keep[keep.length - 1];
+      while (lastLn.length > 1 && lastLn[lastLn.length - 1].x + lastLn[lastLn.length - 1].w + 170 > NAME_MAX) lastLn.pop();
+      extra = list.length - keep.reduce((n, ln) => n + ln.length, 0);
+      L = { ...L, lines: keep };
+    }
+    return { label, val, list, fs, lineH, L, extra, h: 36 + L.lines.length * lineH + 8 };
+  });
+  const aTop = 226; const aH = planned.reduce((n, a2) => n + a2.h, 0) + 12;
+  if (planned.length) {
+    g.fillStyle = "rgba(255,255,255,0.09)"; rr(50, aTop, W - 100, aH, 28); g.fill();
+    const icon = whiteLogo(30);
+    let y = aTop + 6;
+    planned.forEach((a2, i) => {
       if (i) { g.fillStyle = "rgba(255,255,255,0.15)"; g.fillRect(84, y, W - 168, 1.5); }
-      g.fillStyle = dim; g.font = "700 20px " + FONT; g.textAlign = "left"; g.fillText(label, 84, y + 28);
-      g.fillStyle = "#fff"; g.font = "800 32px " + FONT; g.fillText(fit(who, 700), 84, y + 58);
-      g.fillStyle = gold; g.font = "900 40px " + FONT; g.textAlign = "right"; g.fillText(val, W - 84, y + 46);
+      g.fillStyle = dim; g.font = "700 20px " + FONT; g.textAlign = "left"; g.fillText(a2.label, 84, y + 28);
+      const ic = whiteLogo(Math.round(a2.fs * 0.85)) || icon;
+      a2.L.lines.forEach((ln, li) => {
+        const base = y + 36 + li * a2.lineH + a2.fs * 0.78;
+        ln.forEach(tk => {
+          badge(tk.p, 84 + tk.x, base, Math.round(a2.fs * 0.85), ic);
+          g.fillStyle = "#fff"; g.font = "800 " + a2.fs + "px " + FONT; g.textAlign = "left";
+          g.fillText(tk.p.name + (tk.last ? "" : ","), 84 + tk.x + a2.L.slot, base);
+        });
+        if (a2.extra && li === a2.L.lines.length - 1) {
+          const lt = ln[ln.length - 1]; const endX = 84 + lt.x + lt.w;
+          g.fillStyle = dim; g.fillText("+" + a2.extra + " more", endX, base);
+        }
+      });
+      g.fillStyle = gold; g.font = "900 40px " + FONT; g.textAlign = "right"; g.fillText(a2.val, W - 84, y + a2.h / 2 + 14);
+      y += a2.h;
     });
   }
   g.textAlign = "left";
   // players
-  const pTop = aTop + awards.length * aRow + 12 + 40;
-  g.fillStyle = dim; g.font = "700 20px " + FONT; g.fillText("THE RUN  (W-L)" + (sm.guests.length ? "     \u{1F44B} = GUEST" : ""), 54, pTop);
+  const pTop = aTop + aH + 40;
+  g.fillStyle = dim; g.font = "700 20px " + FONT;
+  const legend = "THE RUN  (W-L)";
+  g.fillText(legend, 54, pTop);
+  let lx = 54 + g.measureText(legend).width + 36;
+  const lic = whiteLogo(22);
+  if (lic) { g.drawImage(lic, lx, pTop - 20); lx += lic.width + 8; }
+  g.fillText("MEMBER", lx, pTop); lx += g.measureText("MEMBER").width + 28;
+  g.fillText("\u{1F44B}  GUEST", lx, pTop);
   const list = sm.players, cols = 3, colW = (W - 100 - 2 * 28) / cols;
   const rows = Math.max(1, Math.ceil(list.length / cols));
   const avail = W - 40 - (pTop + 14);
   const rowH = Math.min(52, avail / rows), fs = Math.max(18, Math.min(30, rowH * 0.56));
+  const pic = whiteLogo(Math.round(fs * 0.95));
   list.forEach((p, i) => {
     const col = Math.floor(i / rows), row = i % rows;
-    const x = 50 + col * (colW + 28), y = pTop + 14 + row * rowH;
+    const x = 50 + col * (colW + 28), y = pTop + 14 + row * rowH, base = y + rowH * 0.7;
     g.fillStyle = "rgba(255,255,255,0.14)"; g.fillRect(x, y + rowH - 1, colW, 1.5);
-    g.fillStyle = dim; g.font = "700 " + Math.round(fs * 0.8) + "px " + FONT; g.textAlign = "right"; g.fillText(rec(p), x + colW, y + rowH * 0.7);
+    g.fillStyle = dim; g.font = "700 " + Math.round(fs * 0.8) + "px " + FONT; g.textAlign = "right"; g.fillText(rec(p), x + colW, base);
     const rw = g.measureText(rec(p)).width;
+    badge(p, x, base, Math.round(fs * 0.95), pic);
+    const slot = slotW(fs * 0.95);
     g.fillStyle = "#fff"; g.font = "700 " + Math.round(fs) + "px " + FONT; g.textAlign = "left";
-    g.fillText(fit(p.name + (p.isGuest ? " \u{1F44B}" : ""), colW - rw - 14), x, y + rowH * 0.7);
+    g.fillText(fit(p.name, colW - rw - 14 - slot), x + slot, base);
   });
   return c;
 }
