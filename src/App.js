@@ -1690,7 +1690,7 @@ function AppInner() {
   const ramPos = ram ? ram.pos : null;
 
   return (
-    <div style={{ ...s.root, paddingBottom: 110 }}>
+    <div style={{ ...s.root, paddingBottom: 76 }}>
       <ConfirmModal moveConfirm={moveConfirm} setMoveConfirm={setMoveConfirm} />
 
       {pam && isAdmin && (
@@ -1947,13 +1947,6 @@ function AppInner() {
 
       {gameTab === "game" && (
         <>
-      {lastResult && (
-        <div style={s.resultBanner}>
-          {lastResult.winner && <span style={s.bannerWin}>{lastResult.winner}</span>}
-          {lastResult.loser && <span style={s.bannerLose}> - {lastResult.loser}</span>}
-        </div>
-      )}
-
       <div style={s.court}>
         <div style={s.halfLine} />
         <div key={animKey + "A"} className={lastWinner === "A" ? "win-pulse" : lastWinner === "B" ? "slide-in-left" : ""}
@@ -1985,7 +1978,12 @@ function AppInner() {
           <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => recordResult(false)}>🏆 Away Wins</button>
         </div>
       )}
-      {isAdmin && history.length > 0 && <button style={s.undoBtn} onClick={undo}>↩ Undo last result</button>}
+      <div style={s.resultRow}>
+        <span style={s.resultText}>
+          {lastResult ? (<>{lastResult.winner && <span style={s.bannerWin}>{lastResult.winner}</span>}{lastResult.loser && <span style={s.bannerLose}> - {lastResult.loser}</span>}</>) : <span style={s.bannerLose}>No games yet</span>}
+        </span>
+        {isAdmin && history.length > 0 && <button style={s.undoLink} onClick={undo}>↩ Undo</button>}
+      </div>
 
       <div style={{ ...s.card, margin: "12px 16px 0", padding: "14px 16px 4px", ...(timerDone ? s.cardDone : timerRunning ? s.cardRunning : {}) }}>
         <div style={{ ...s.timerDisplay, marginBottom: 10, justifyContent: "center" }}>
@@ -2308,6 +2306,9 @@ function buildS() {
   statsBannerLabel: { fontSize: 11, fontWeight: 500, color: COLOR.secondaryLabel, textTransform: "uppercase", letterSpacing: "0.02em", whiteSpace: "nowrap" },
   statsBannerSub: { fontSize: 12, fontWeight: 400, color: COLOR.secondaryLabel, textAlign: "center" },
   resultBanner: { margin: "10px 16px 0", background: COLOR.systemBackground, borderRadius: RADIUS.md, padding: "10px 14px", fontSize: 13, boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
+  resultRow: { display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, margin: "4px 16px 0", height: 36, fontSize: 13 },
+  resultText: { flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+  undoLink: { background: "none", border: "none", color: COLOR.tint, fontSize: 15, fontWeight: 600, padding: "6px 4px", cursor: "pointer" },
   bannerWin: { color: COLOR.success, fontWeight: 700 },
   bannerLose: { color: COLOR.secondaryLabel },
   court: { display: "flex", alignItems: "stretch", margin: "12px 16px 0", background: COLOR.systemBackground, borderRadius: RADIUS.lg, overflow: "hidden", position: "relative", minHeight: 210, boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
