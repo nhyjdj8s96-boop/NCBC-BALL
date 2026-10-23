@@ -378,7 +378,7 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
   );
 }
 
-function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer, fullRoster }) {
+function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer, fullRoster, bare }) {
   const allActive = [...teamA, ...teamB, ...queue, ...sittingOut, ...left];
   const added = new Set(allActive.map(p => p.name.toLowerCase()));
   const sk = n => {
@@ -387,10 +387,10 @@ function LateChips({ teamA, teamB, queue, sittingOut, left, addPlayer, fullRoste
   };
   const all = [...fullRoster].sort((a, b) => sk(a).localeCompare(sk(b)));
   const anyAvailable = all.some(n => !added.has(n.toLowerCase()));
-  if (!anyAvailable) return null;
+  if (!anyAvailable) return bare ? <p style={{ ...s.emptyStateSub, textAlign: "left" }}>Everyone on the list is already in.</p> : null;
   return (
-    <div style={s.card}>
-      <p style={s.sectionLabel}>On the list, just running late?</p>
+    <div style={bare ? { width: "100%" } : s.card}>
+      <p style={s.sectionLabel}>{bare ? "Tap a member to add them" : "On the list, just running late?"}</p>
       <div style={s.chipGrid}>
         {all.map(n => {
           const isIn = added.has(n.toLowerCase());
@@ -755,6 +755,7 @@ function AppInner() {
   // constant so every existing gate keeps working unchanged.
   const isAdmin = true;
   const [settingsMenu, setSettingsMenu] = useState(false);
+  const [joinSheet, setJoinSheet] = useState(false);
   const [gameTab, setGameTab] = useState("game"); // "game" | "roster" | "log"
 
   const [view, setView] = useState(VIEWS.SETUP);
@@ -2049,17 +2050,24 @@ function AppInner() {
       </div>
 
       {isAdmin && (
-        <>
-          <div style={s.card}>
-            <p style={s.sectionLabel}>Join the run</p>
-            <div style={s.row}>
-              <input style={s.input} placeholder="Your name" value={nameInput} onChange={e => setNameInput(e.target.value)} onKeyDown={e => e.key === "Enter" && addPlayer(nameInput)} />
-              <button style={s.addBtn} onClick={() => addPlayer(nameInput)}>+</button>
-            </div>
-          </div>
+        <div style={{ margin: "12px 16px 0" }}>
+          <button style={s.joinBtn} onClick={() => setJoinSheet(true)}>+ Join the run</button>
+        </div>
+      )}
 
-          <LateChips teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
-        </>
+      {isAdmin && joinSheet && (
+        <div style={s.overlay} onClick={() => setJoinSheet(false)}>
+          <div style={{ ...s.modal, alignItems: "stretch" }} onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 20, fontWeight: 700, textAlign: "center" }}>Join the run</div>
+            <div style={s.row}>
+              <input style={s.input} placeholder="New name" value={nameInput} onChange={e => setNameInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter" && nameInput.trim()) { addPlayer(nameInput); setJoinSheet(false); } }} />
+              <button style={s.addBtn} onClick={() => { if (nameInput.trim()) { addPlayer(nameInput); setJoinSheet(false); } }}>+</button>
+            </div>
+            <LateChips bare teamA={teamA} teamB={teamB} queue={queue} sittingOut={[...sittingOut, ...injured]} left={left} addPlayer={addPlayer} fullRoster={fullRoster} />
+            <button style={s.btnCancel} onClick={() => setJoinSheet(false)}>Done</button>
+          </div>
+        </div>
       )}
 
       {sortedQ.length > 0 ? (
@@ -2242,6 +2250,7 @@ function buildS() {
   cardDone: { background: COLOR.dangerSubtleBg, boxShadow: "0 0 0 2px #FF3B30" },
   row: { display: "flex", gap: 10 },
   input: { flex: 1, minWidth: 0, width: "100%", background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.label, padding: "12px 14px", fontSize: 16, outline: "none", fontFamily: "inherit" },
+  joinBtn: { width: "100%", height: 50, border: "none", borderRadius: RADIUS.md, background: COLOR.tint, color: "#fff", fontSize: 17, fontWeight: 700, cursor: "pointer" },
   addBtn: { background: COLOR.tint, border: "none", borderRadius: RADIUS.sm, color: "#fff", fontSize: 22, width: 46, flexShrink: 0, cursor: "pointer", fontWeight: 700 },
   countRow: { margin: "14px 0 10px", fontSize: 15, display: "flex", alignItems: "baseline", gap: 4, flexWrap: "wrap" },
   countNum: { fontSize: 34, fontWeight: 800, color: COLOR.tint, letterSpacing: "-0.02em" },
