@@ -1179,6 +1179,7 @@ function AppInner() {
   };
 
   const [sessionSummary, setSessionSummary] = useState(null);
+  const [wrapClean, setWrapClean] = useState(false);
 
   // Step 1: compute the night's story and show it (no wipe yet)
   const endSession = () => {
@@ -1882,52 +1883,67 @@ function AppInner() {
 
       {sessionSummary && (() => {
         const sm = sessionSummary;
-        const names = list => list.map(p => p.name).join(", ");
+        const short = list => list.length > 3 ? list.slice(0, 3).map(p => p.name).join(", ") + " +" + (list.length - 3) : list.map(p => p.name).join(", ");
         const rec = p => (p.wins || 0) + "-" + ((p.gamesPlayed || 0) - (p.wins || 0));
         const awards = [
-          sm.mostGames.length > 0 && ["Most games", names(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
-          sm.mostWins.length > 0 && ["Most wins", names(sm.mostWins), String(sm.mostWins[0].wins || 0)],
-          sm.mostLosses.length > 0 && ["Most losses", names(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
-          sm.bestWinPct.length > 0 && ["Best record", names(sm.bestWinPct), rec(sm.bestWinPct[0])],
-          sm.worstWinPct.length > 0 && ["Worst record", names(sm.worstWinPct), rec(sm.worstWinPct[0])],
+          sm.mostWins.length > 0 && ["🥇", "Most wins", short(sm.mostWins), String(sm.mostWins[0].wins || 0)],
+          sm.bestWinPct.length > 0 && ["🎯", "Best record", short(sm.bestWinPct), rec(sm.bestWinPct[0])],
+          sm.mostGames.length > 0 && ["🏃", "Most games", short(sm.mostGames), String(sm.mostGames[0].gamesPlayed || 0)],
+          sm.mostLosses.length > 0 && ["😬", "Most losses", short(sm.mostLosses), String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
+          sm.worstWinPct.length > 0 && ["💀", "Worst record", short(sm.worstWinPct), rec(sm.worstWinPct[0])],
         ].filter(Boolean);
+        const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+        const many = sm.players.length > 18;
+        const gold = "#FFC24D";
         return (
-          <div style={s.overlay}>
-            <div style={{ background: COLOR.systemBackground, borderRadius: RADIUS.lg + "px " + RADIUS.lg + "px 0 0", width: "100%", maxWidth: 480, height: "calc(100% - 40px)", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
-              <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "18px 20px 12px" }}>
-                <img src={NCBC_LOGO} alt="NCBC" style={{ width: 40, height: 40, objectFit: "contain", flex: "none" }} />
-                <div style={{ flex: 1, minWidth: 0, fontSize: 22, fontWeight: 800, color: COLOR.label }}>That's a wrap!</div>
-                <div style={{ textAlign: "right", lineHeight: 1.2 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: COLOR.tint }}>{sm.totalGames} game{sm.totalGames === 1 ? "" : "s"}</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: COLOR.tint }}>{sm.playerCount} ballers</div>
-                </div>
+          <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "linear-gradient(170deg, #0E1B38 0%, #1B3566 55%, #0E1B38 100%)", color: "#fff", display: "flex", flexDirection: "column", alignItems: "center" }}
+            onClick={() => setWrapClean(v => !v)}>
+            <div style={{ width: "100%", maxWidth: 480, flex: 1, minHeight: 0, overflowY: "auto", padding: "calc(22px + env(safe-area-inset-top)) 22px 12px", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
+              <div style={{ textAlign: "center" }}>
+                <img src={NCBC_LOGO} alt="" style={{ width: 46, height: 46, objectFit: "contain", filter: "brightness(0) invert(1)" }} />
+                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.18em", color: gold, marginTop: 6 }}>NEW COVENANT BAPTIST CHURCH</div>
+                <div style={{ fontSize: 30, fontWeight: 900, letterSpacing: "-0.02em", marginTop: 2 }}>Monday Night Ball</div>
+                <div style={{ fontSize: 15, color: "rgba(255,255,255,0.7)", marginTop: 2 }}>{dateStr}</div>
               </div>
-              <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "0 20px 12px", borderTop: "0.5px solid " + COLOR.separator }}>
-                {awards.length > 0 && (
-                  <div style={{ padding: "10px 0 6px" }}>
-                    {awards.map(([label, who, val]) => (
-                      <div key={label} style={{ display: "flex", gap: 10, padding: "5px 0", fontSize: 15 }}>
-                        <span style={{ width: 96, flex: "none", color: COLOR.secondaryLabel }}>{label}</span>
-                        <span style={{ flex: 1, minWidth: 0, fontWeight: 600, color: COLOR.label, wordBreak: "break-word" }}>{who}</span>
-                        <span style={{ flex: "none", fontWeight: 700, color: COLOR.tint }}>{val}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.05em", color: COLOR.secondaryLabel, padding: "10px 0 4px" }}>EVERYONE{sm.guests.length > 0 ? " (👋 = guest)" : ""}</div>
-                {sm.players.map((p, i) => (
-                  <div key={p.id} style={{ ...s.summaryRow, padding: "9px 2px" }}>
-                    <span style={s.summaryRank}>{i + 1}</span>
-                    <span style={s.summaryName}>{p.name}{p.isGuest ? " 👋" : ""}</span>
-                    <span style={s.summaryGames}>{p.wins || 0}-{(p.gamesPlayed || 0) - (p.wins || 0)} · {p.gamesPlayed || 0}g</span>
+
+              <div style={{ display: "flex", justifyContent: "center", gap: 36, margin: "16px 0 14px" }}>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1, color: gold }}>{sm.totalGames}</div><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.7)", marginTop: 4 }}>GAMES</div></div>
+                <div style={{ textAlign: "center" }}><div style={{ fontSize: 44, fontWeight: 900, lineHeight: 1, color: gold }}>{sm.playerCount}</div><div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.1em", color: "rgba(255,255,255,0.7)", marginTop: 4 }}>BALLERS</div></div>
+              </div>
+
+              {awards.length > 0 && (
+                <div style={{ background: "rgba(255,255,255,0.09)", borderRadius: 16, padding: "6px 14px" }}>
+                  {awards.map(([icon, label, who, val], i) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 0", borderTop: i ? "0.5px solid rgba(255,255,255,0.15)" : "none" }}>
+                      <span style={{ width: 22, textAlign: "center", fontSize: 17 }}>{icon}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>
+                        <span style={{ display: "block", fontSize: 11, fontWeight: 700, letterSpacing: "0.06em", color: "rgba(255,255,255,0.6)", textTransform: "uppercase" }}>{label}</span>
+                        <span style={{ display: "block", fontSize: 16, fontWeight: 700, wordBreak: "break-word" }}>{who}</span>
+                      </span>
+                      <span style={{ fontSize: 18, fontWeight: 800, color: gold }}>{val}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: "0.12em", color: "rgba(255,255,255,0.6)", margin: "16px 2px 6px" }}>THE RUN (W-L){sm.guests.length > 0 ? "   👋 GUEST" : ""}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", columnGap: 18 }}>
+                {sm.players.map(p => (
+                  <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 6, padding: many ? "4px 0" : "5px 0", borderBottom: "0.5px solid rgba(255,255,255,0.12)", fontSize: many ? 13 : 14 }}>
+                    <span style={{ flex: 1, minWidth: 0, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.name}{p.isGuest ? " 👋" : ""}</span>
+                    <span style={{ color: "rgba(255,255,255,0.7)", fontVariantNumeric: "tabular-nums" }}>{rec(p)}</span>
                   </div>
                 ))}
               </div>
-              <div style={{ padding: "12px 20px calc(14px + env(safe-area-inset-bottom))", borderTop: "0.5px solid " + COLOR.separator }}>
-                <button style={{ ...s.primaryBtn, width: "100%", margin: 0 }} onClick={finishEndSession}>Done — clear session</button>
-                <button style={{ ...s.btnCancel, marginTop: 4, padding: "10px 16px" }} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
-              </div>
             </div>
+
+            {!wrapClean && (
+              <div style={{ width: "100%", maxWidth: 480, padding: "10px 22px calc(14px + env(safe-area-inset-bottom))", boxSizing: "border-box" }} onClick={e => e.stopPropagation()}>
+                <div style={{ textAlign: "center", fontSize: 12, color: "rgba(255,255,255,0.6)", marginBottom: 8 }}>Tap anywhere on the card to hide these buttons, then screenshot</div>
+                <button style={{ width: "100%", height: 50, border: "none", borderRadius: 14, background: gold, color: "#0E1B38", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit" }} onClick={() => { setWrapClean(false); finishEndSession(); }}>Done — clear session</button>
+                <button style={{ width: "100%", height: 42, marginTop: 4, border: "none", background: "none", color: "rgba(255,255,255,0.8)", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} onClick={() => { setWrapClean(false); setSessionSummary(null); }}>Go back — keep playing</button>
+              </div>
+            )}
           </div>
         );
       })()}
