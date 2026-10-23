@@ -17,6 +17,9 @@ window.SpeechSynthesisUtterance = function () {};
 // jsdom has no canvas. Stub just enough that the end-of-night recap image code really runs
 // (layout, wrapping, sorting, measuring) so a thrown error in it would show up here.
 let canvasDraws = 0;
+window.scrollTo = () => {};
+// jsdom never loads images; make the logo "load" so the recap draws.
+window.Image = function () { const im = { width: 409, height: 536 }; Object.defineProperty(im, "src", { set() { setTimeout(() => im.onload && im.onload(), 0); } }); return im; };
 HTMLCanvasElement.prototype.getContext = function () {
   const ctx = { measureText: (s) => ({ width: String(s).length * 14 }), createLinearGradient: () => ({ addColorStop() {} }) };
   return new Proxy(ctx, { get: (o, k) => (k in o ? o[k] : (k === "canvas" ? this : () => { canvasDraws++; })), set: () => true });
@@ -103,6 +106,7 @@ async function chaos(N, mode, steps, seed) {
         const before = read();
         fireEvent.click(screen.getByRole("button", { name: "End session" })); fireEvent.click(screen.getByRole("button", { name: "Yes, end session" }));
         screen.getByRole("button", { name: "Share image" }); screen.getByText("Done — clear session");
+        await screen.findByAltText("Monday Night Ball recap");
         fireEvent.click(screen.getByText("Go back — keep playing"));
         if (JSON.stringify(read()) !== JSON.stringify(before)) violations.push("step " + i + ": recap changed the live session");
         if (screen.queryByRole("button", { name: "Share image" })) violations.push("step " + i + ": recap did not close");
