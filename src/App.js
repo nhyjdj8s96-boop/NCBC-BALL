@@ -484,7 +484,9 @@ function renderWrapCanvas(sm, dateStr, logo) {
   if (lic) { g.drawImage(lic, lx, pTop - 20); lx += lic.width + 8; }
   g.fillText("MEMBER", lx, pTop); lx += g.measureText("MEMBER").width + 28;
   g.fillText("\u{1F44B}  GUEST", lx, pTop);
-  const list = sm.players, cols = 3, colW = (W - 100 - 2 * 28) / cols;
+  // Best record first: win %, then more wins, then more games, then name. Nobody with 0 games goes first.
+  const pct = p => (p.gamesPlayed || 0) > 0 ? (p.wins || 0) / p.gamesPlayed : -1;
+  const list = [...sm.players].sort((a, b) => pct(b) - pct(a) || (b.wins || 0) - (a.wins || 0) || (b.gamesPlayed || 0) - (a.gamesPlayed || 0) || a.name.localeCompare(b.name)), cols = 3, colW = (W - 100 - 2 * 28) / cols;
   const rows = Math.max(1, Math.ceil(list.length / cols));
   const avail = W - 40 - (pTop + 14);
   const rowH = Math.min(52, avail / rows), fs = Math.max(18, Math.min(30, rowH * 0.56));
