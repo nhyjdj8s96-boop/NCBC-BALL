@@ -1929,6 +1929,7 @@ function AppInner() {
           <span style={s.gameLabel}>GAME {gameCount}</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, position: "relative", flexShrink: 0 }}>
+          {isAdmin && <button style={s.endSessionTopBtn} onClick={() => setEndSessionConfirm(true)}>End session</button>}
           <button style={s.themeToggleBtn} onClick={() => setSettingsMenu(v => !v)} aria-label="Settings">⚙️</button>
           {settingsMenu && (
             <>
@@ -2046,13 +2047,6 @@ function AppInner() {
         </div>
         <span style={s.statsBannerSub}>{memberCount} member{memberCount === 1 ? "" : "s"} · {guestCount} guest{guestCount === 1 ? "" : "s"}</span>
       </div>
-
-      {isAdmin && (
-        <div style={s.card}>
-          <p style={s.sectionLabel}>Session</p>
-          <button style={{ ...s.sessionBtn, color: COLOR.danger }} onClick={() => setEndSessionConfirm(true)}>End session</button>
-        </div>
-      )}
 
       {isAdmin && (
         <>
@@ -2287,6 +2281,7 @@ function buildS() {
   adminUnlockBtn: { display: "block", width: "calc(100% - 32px)", margin: "10px 16px 0", background: COLOR.systemBackground, border: "none", borderRadius: RADIUS.md, color: COLOR.secondaryLabel, fontSize: 15, fontWeight: 500, padding: "11px", cursor: "pointer", boxShadow: "0 1px 3px rgba(0,0,0,0.06)" },
   logoutBtn: { display: "block", width: "calc(100% - 32px)", margin: "8px 16px 0", background: "none", border: "none", borderRadius: RADIUS.md, color: COLOR.danger, fontSize: 15, fontWeight: 500, padding: "10px", cursor: "pointer" },
   lockBtn: { background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, color: COLOR.secondaryLabel, fontSize: 12, fontWeight: 600, padding: "6px 10px", cursor: "pointer", whiteSpace: "nowrap" },
+  endSessionTopBtn: { background: COLOR.dangerSubtleBg2, border: "none", borderRadius: RADIUS.sm, color: COLOR.danger, fontSize: 13, fontWeight: 600, padding: "8px 10px", cursor: "pointer", lineHeight: 1, whiteSpace: "nowrap" },
   themeToggleBtn: { background: COLOR.tertiarySystemBackground, border: "none", borderRadius: RADIUS.sm, fontSize: 14, padding: "6px 10px", cursor: "pointer", lineHeight: 1 },
   settingsPopoverBackdrop: { position: "fixed", inset: 0, zIndex: 19 },
   settingsPopover: { position: "absolute", top: "calc(100% + 6px)", right: 0, background: COLOR.systemBackground, borderRadius: RADIUS.md, boxShadow: "0 4px 16px rgba(0,0,0,0.15)", padding: 4, zIndex: 20, minWidth: 160 },
