@@ -219,7 +219,7 @@ const KNOWN_PLAYERS = [
 const uid = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 
 function initPlayer(name, joinOrder) {
-  return { id: uid(), name, joinOrder, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: false };
+  return { id: uid(), name, joinOrder, roundsWaited: 0, gamesSat: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: false };
 }
 
 function sortQueue(players) {
@@ -1660,7 +1660,8 @@ function AppInner() {
     const staying = [...notStreaking, ...forcedStay.map(p => ({ ...p, winStreak: 0 }))];
     saveSnap(); logGame();
     buzz([40, 60, 40]);
-    const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
+    // Everyone waiting in line while this game was played sat it out: add it to their running total too.
+    const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1, gamesSat: (p.gamesSat || 0) + 1 }));
     const loserAged = loserUpd.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
     const soAged = streakOut.map(p => ({ ...p, winStreak: 0, roundsWaited: 0, hasPlayed: true, streakedOut: true }));
     // Guaranteed one-game-break subs: figure out who's due back BEFORE
@@ -2263,7 +2264,8 @@ function AppInner() {
             const pos = i + 1;
             const posLabel = pos <= teamSize ? "Playing next" : pos <= teamSize * 2 ? "Playing in 2" : "~" + Math.ceil(pos / teamSize) + " games wait";
             const parts = [];
-            if (p.roundsWaited > 0) parts.push("sat " + p.roundsWaited);
+            if (p.roundsWaited > 0) parts.push("waiting " + p.roundsWaited);
+            if ((p.gamesSat || 0) > 0) parts.push("sat " + p.gamesSat + " total");
             if ((p.gamesPlayed || 0) > 0) parts.push("played " + p.gamesPlayed);
             return (
               <PlayerRow key={p.id} player={p} pos={pos}
@@ -2292,7 +2294,7 @@ function AppInner() {
           {sortQueue(sittingOut).map((p, i, arr) => (
             <PlayerRow key={p.id} player={p}
               heatBg={waitHeat(p.roundsWaited).background}
-              meta={p.skipUntilGame ? "Sitting this game - back next game guaranteed" : "Sat " + p.roundsWaited + " round" + (p.roundsWaited === 1 ? "" : "s")}
+              meta={(p.skipUntilGame ? "Sitting this game - back next game guaranteed" : "Sat " + p.roundsWaited + " round" + (p.roundsWaited === 1 ? "" : "s")) + ((p.gamesSat || 0) > 0 ? " - " + p.gamesSat + " total" : "")}
               onTap={isAdmin ? () => setRowActionModal({ player: p, zone: "sitting" }) : null}
               isLast={i === arr.length - 1}
             />
@@ -2313,7 +2315,7 @@ function AppInner() {
           {sortQueue(injured).map((p, i, arr) => (
             <PlayerRow key={p.id} player={p}
               heatBg={waitHeat(p.roundsWaited).background}
-              meta={"Out " + p.roundsWaited + " round" + (p.roundsWaited === 1 ? "" : "s") + " - back when ready"}
+              meta={"Out " + p.roundsWaited + " round" + (p.roundsWaited === 1 ? "" : "s") + " - back when ready" + ((p.gamesSat || 0) > 0 ? " - sat " + p.gamesSat + " total" : "")}
               onTap={isAdmin ? () => setRowActionModal({ player: p, zone: "injured" }) : null}
               isLast={i === arr.length - 1}
             />
