@@ -509,7 +509,10 @@ function renderWrapCanvas(sm, dateStr, logo) {
     badge(p, x, base, Math.round(fs * 0.95), pic);
     const slot = slotW(fs * 0.95);
     g.fillStyle = "#fff"; g.font = "700 " + Math.round(fs) + "px " + FONT; g.textAlign = "left";
-    g.fillText(fit(p.name, colW - rw - 14 - slot), x + slot, base);
+    const room = colW - rw - 14 - slot;
+    const parts = p.name.trim().split(/\s+/);
+    const short = parts.length > 1 ? parts[0] + " " + parts[parts.length - 1][0] + "." : p.name;
+    g.fillText(fit(g.measureText(p.name).width <= room ? p.name : short, room), x + slot, base);
   });
   return c;
 }
