@@ -425,14 +425,14 @@ function renderWrapCanvas(sm, dateStr, logo) {
     sm.worstWinPct.length > 0 && ["WORST RECORD", sm.worstWinPct, rec(sm.worstWinPct[0])],
   ].filter(Boolean);
   const NAME_MAX = 780;
-  const layout = (list, fs, sep) => {
+  const layout = (list, fs, sep, indent = 0) => {
     g.font = "800 " + fs + "px " + FONT;
     const slot = slotW(fs * 0.85);
     const lines = [[]]; let x = 0;
     list.forEach((p, i) => {
       const w = slot + g.measureText(p.name + (i < list.length - 1 ? sep : "")).width + 18;
-      if (x > 0 && x + w > NAME_MAX) { lines.push([]); x = 0; }
-      lines[lines.length - 1].push({ p, x, w, last: i === list.length - 1 }); x += w;
+      if (x > 0 && x + w > NAME_MAX - indent) { lines.push([]); x = 0; }
+      lines[lines.length - 1].push({ p, x: x + indent, w, last: i === list.length - 1 }); x += w;
     });
     return { lines, slot };
   };
@@ -441,7 +441,11 @@ function renderWrapCanvas(sm, dateStr, logo) {
     const sep = opts && opts.amp ? " &" : ",";
     const groups = opts && opts.groups ? opts.groups : [list];
     const lines = []; let slot = 0;
-    groups.forEach(grp => { const Lg = layout(grp, fs, sep); slot = Lg.slot; Lg.lines.forEach(ln => lines.push(ln)); });
+    const numbered = groups.length > 1;
+    groups.forEach((grp, gi) => {
+      const Lg = layout(grp, fs, sep, numbered ? Math.round(fs * 1.1) : 0); slot = Lg.slot;
+      Lg.lines.forEach((ln, li) => { if (numbered && li === 0) ln.num = (gi + 1) + "."; lines.push(ln); });
+    });
     return { label, val, list, fs, lineH, L: { lines, slot }, sep, h: 36 + lines.length * lineH + 8 };
   });
   const rowsNeeded = Math.max(1, Math.ceil(sm.players.length / 3));
@@ -464,6 +468,7 @@ function renderWrapCanvas(sm, dateStr, logo) {
       const ic = whiteLogo(Math.round(a2.fs * 0.85)) || icon;
       a2.L.lines.forEach((ln, li) => {
         const base = y + 36 + li * a2.lineH + a2.fs * 0.78;
+        if (ln.num) { g.fillStyle = dim; g.font = "800 " + a2.fs + "px " + FONT; g.textAlign = "left"; g.fillText(ln.num, 84, base); }
         ln.forEach(tk => {
           badge(tk.p, 84 + tk.x, base, Math.round(a2.fs * 0.85), ic);
           g.fillStyle = "#fff"; g.font = "800 " + a2.fs + "px " + FONT; g.textAlign = "left";
