@@ -1357,7 +1357,10 @@ function AppInner() {
     // keyed by date, never wiped by the summary dismissal or session clear.
     // Each attendee keeps their guest/member status so the history view can
     // separate the two, not just show one flat name list.
-    const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+    // Local calendar date (YYYY-MM-DD). toISOString() is UTC, which flips to "tomorrow"
+    // for a night session that ends after about 8pm Eastern.
+    const nowD = new Date();
+    const today = nowD.getFullYear() + "-" + String(nowD.getMonth() + 1).padStart(2, "0") + "-" + String(nowD.getDate()).padStart(2, "0");
     const attendees = everyone.map(p => ({ name: p.name, isGuest: !!p.isGuest }));
     setAttendanceLog(prev => {
       const withoutToday = prev.filter(e => e.date !== today);
