@@ -419,7 +419,7 @@ function renderWrapCanvas(sm, dateStr, logo) {
   const awards = [
     sm.mostWins.length > 0 && ["MOST WINS", sm.mostWins, String(sm.mostWins[0].wins || 0)],
     sm.bestWinPct.length > 0 && ["BEST RECORD", sm.bestWinPct, rec(sm.bestWinPct[0])],
-    sm.bestDuo && ["BEST DUO", sm.bestDuo.players, sm.bestDuo.w + "-" + (sm.bestDuo.g - sm.bestDuo.w), { amp: true, tied: sm.bestDuo.tied }],
+    sm.bestDuo && ["BEST UNIT", sm.bestDuo.players, sm.bestDuo.w + "-" + (sm.bestDuo.g - sm.bestDuo.w), { amp: sm.bestDuo.players.length === 2, tied: sm.bestDuo.tied }],
     sm.mostGames.length > 0 && ["MOST GAMES", sm.mostGames, String(sm.mostGames[0].gamesPlayed || 0)],
     sm.mostLosses.length > 0 && ["MOST LOSSES", sm.mostLosses, String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
     sm.worstWinPct.length > 0 && ["WORST RECORD", sm.worstWinPct, rec(sm.worstWinPct[0])],
@@ -1353,19 +1353,30 @@ function AppInner() {
     // always members; typed-in names are asked directly)
     const guests = everyone.filter(p => p.isGuest);
 
-    // Best duo: the pair with the most wins together (needs 2+ games and 2+ wins together).
+    // Best unit: the group of 2-5 players with the most wins together (needs 2+ games and 2+ wins together).
     const byId = new Map(everyone.map(p => [p.id, p]));
-    const pairs = new Map();
-    gameLog.forEach(gm => [[gm.w, 1], [gm.l, 0]].forEach(([team, won]) => {
-      for (let i = 0; i < team.length; i++) for (let j = i + 1; j < team.length; j++) {
-        const a = team[i], b = team[j]; const k = a < b ? a + "|" + b : b + "|" + a;
-        const e = pairs.get(k) || { a, b, g: 0, w: 0 }; e.g++; e.w += won; pairs.set(k, e);
+    const groups = new Map();
+    const subsets = (arr) => {
+      const out = [];
+      const n = arr.length;
+      for (let m = 1; m < (1 << n); m++) {
+        const sub = [];
+        for (let i = 0; i < n; i++) if (m & (1 << i)) sub.push(arr[i]);
+        if (sub.length >= 2) out.push(sub);
       }
+      return out;
+    };
+    gameLog.forEach(gm => [[gm.w, 1], [gm.l, 0]].forEach(([team, won]) => {
+      if (team.length < 2 || team.length > 8) return;
+      subsets([...team].sort()).forEach(sub => {
+        const k = sub.join("|");
+        const e = groups.get(k) || { ids: sub, g: 0, w: 0 }; e.g++; e.w += won; groups.set(k, e);
+      });
     }));
-    const duos = [...pairs.values()].filter(e => e.g >= 2 && e.w >= 2 && byId.has(e.a) && byId.has(e.b))
-      .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
-    const topDuo = duos[0];
-    const bestDuo = topDuo ? { players: [byId.get(topDuo.a), byId.get(topDuo.b)], w: topDuo.w, g: topDuo.g, tied: duos.filter(e => e.w === topDuo.w && e.g === topDuo.g).length - 1 } : null;
+    const units = [...groups.values()].filter(e => e.g >= 2 && e.w >= 2 && e.ids.every(id => byId.has(id)))
+      .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || y.ids.length - x.ids.length || x.g - y.g);
+    const topUnit = units[0];
+    const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), w: topUnit.w, g: topUnit.g, tied: units.filter(e => e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length).length - 1 } : null;
 
     setSessionSummary({
       totalGames,
