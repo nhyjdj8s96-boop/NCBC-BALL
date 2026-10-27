@@ -277,6 +277,7 @@ function sessionPayload(d) {
     gameCount: d.gameCount ?? 1,
     lastResult: d.lastResult ?? null,
     history: d.history ?? [],
+    gameLog: d.gameLog ?? [],
     timerRunning: d.timerRunning ?? false,
     timerDone: d.timerDone ?? false,
     endTime: d.endTime ?? null,
@@ -418,26 +419,27 @@ function renderWrapCanvas(sm, dateStr, logo) {
   const awards = [
     sm.mostWins.length > 0 && ["MOST WINS", sm.mostWins, String(sm.mostWins[0].wins || 0)],
     sm.bestWinPct.length > 0 && ["BEST RECORD", sm.bestWinPct, rec(sm.bestWinPct[0])],
+    sm.bestDuo && ["BEST DUO", sm.bestDuo.players, sm.bestDuo.w + "-" + (sm.bestDuo.g - sm.bestDuo.w), { amp: true, tied: sm.bestDuo.tied }],
     sm.mostGames.length > 0 && ["MOST GAMES", sm.mostGames, String(sm.mostGames[0].gamesPlayed || 0)],
     sm.mostLosses.length > 0 && ["MOST LOSSES", sm.mostLosses, String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
     sm.worstWinPct.length > 0 && ["WORST RECORD", sm.worstWinPct, rec(sm.worstWinPct[0])],
   ].filter(Boolean);
   const NAME_MAX = 780;
-  const layout = (list, fs) => {
+  const layout = (list, fs, sep) => {
     g.font = "800 " + fs + "px " + FONT;
     const slot = slotW(fs * 0.85);
     const lines = [[]]; let x = 0;
     list.forEach((p, i) => {
-      const w = slot + g.measureText(p.name + (i < list.length - 1 ? "," : "")).width + 18;
+      const w = slot + g.measureText(p.name + (i < list.length - 1 ? sep : "")).width + 18;
       if (x > 0 && x + w > NAME_MAX) { lines.push([]); x = 0; }
       lines[lines.length - 1].push({ p, x, w, last: i === list.length - 1 }); x += w;
     });
     return { lines, slot };
   };
-  const maxLines = sm.players.length > 24 ? 1 : 2;
-  const planned = awards.map(([label, list, val]) => {
-    let fs = 32, lineH = 40, L = layout(list, fs);
-    if (L.lines.length > maxLines) { fs = 27; lineH = 34; L = layout(list, fs); }
+  const planFor = maxLines => awards.map(([label, list, val, opts]) => {
+    const sep = opts && opts.amp ? " &" : ",";
+    let fs = 32, lineH = 40, L = layout(list, fs, sep);
+    if (L.lines.length > maxLines) { fs = 27; lineH = 34; L = layout(list, fs, sep); }
     let extra = 0;
     if (L.lines.length > maxLines) {
       const keep = L.lines.slice(0, maxLines);
@@ -446,9 +448,15 @@ function renderWrapCanvas(sm, dateStr, logo) {
       extra = list.length - keep.reduce((n, ln) => n + ln.length, 0);
       L = { ...L, lines: keep };
     }
-    return { label, val, list, fs, lineH, L, extra, h: 36 + L.lines.length * lineH + 8 };
+    const tiedText = !extra && opts && opts.tied > 0 ? "+" + opts.tied + " tied" : "";
+    return { label, val, list, fs, lineH, L, extra, sep, tiedText, h: 36 + L.lines.length * lineH + 8 };
   });
-  const aTop = 226; const aH = planned.reduce((n, a2) => n + a2.h, 0) + 12;
+  // If long tie lists would squeeze the player list, show ties on one line (+N more) instead.
+  const rowsNeeded = Math.max(1, Math.ceil(sm.players.length / 3));
+  const heightOf = pl => pl.reduce((n, a2) => n + a2.h, 0) + 12;
+  let planned = planFor(2);
+  if (W - 40 - (226 + heightOf(planned) + 54) < rowsNeeded * 36) planned = planFor(1);
+  const aTop = 226; const aH = heightOf(planned);
   if (planned.length) {
     g.fillStyle = "rgba(255,255,255,0.09)"; rr(50, aTop, W - 100, aH, 28); g.fill();
     const icon = whiteLogo(30);
@@ -462,11 +470,11 @@ function renderWrapCanvas(sm, dateStr, logo) {
         ln.forEach(tk => {
           badge(tk.p, 84 + tk.x, base, Math.round(a2.fs * 0.85), ic);
           g.fillStyle = "#fff"; g.font = "800 " + a2.fs + "px " + FONT; g.textAlign = "left";
-          g.fillText(tk.p.name + (tk.last ? "" : ","), 84 + tk.x + a2.L.slot, base);
+          g.fillText(tk.p.name + (tk.last ? "" : a2.sep), 84 + tk.x + a2.L.slot, base);
         });
-        if (a2.extra && li === a2.L.lines.length - 1) {
+        if ((a2.extra || a2.tiedText) && li === a2.L.lines.length - 1) {
           const lt = ln[ln.length - 1]; const endX = 84 + lt.x + lt.w;
-          g.fillStyle = dim; g.fillText("+" + a2.extra + " more", endX, base);
+          g.fillStyle = dim; g.fillText(a2.extra ? "+" + a2.extra + " more" : a2.tiedText, endX, base);
         }
       });
       g.fillStyle = gold; g.font = "900 40px " + FONT; g.textAlign = "right"; g.fillText(a2.val, W - 84, y + a2.h / 2 + 14);
@@ -485,6 +493,7 @@ function renderWrapCanvas(sm, dateStr, logo) {
   g.fillText("MEMBER", lx, pTop); lx += g.measureText("MEMBER").width + 28;
   g.fillText("\u{1F44B}  GUEST", lx, pTop);
   // Best record first: win %, then more wins, then more games, then name. Nobody with 0 games goes first.
+  const recPct = p => rec(p) + ((p.gamesPlayed || 0) > 0 ? "  " + Math.round(100 * (p.wins || 0) / p.gamesPlayed) + "%" : "");
   const pct = p => (p.gamesPlayed || 0) > 0 ? (p.wins || 0) / p.gamesPlayed : -1;
   const list = [...sm.players].sort((a, b) => pct(b) - pct(a) || (b.wins || 0) - (a.wins || 0) || (b.gamesPlayed || 0) - (a.gamesPlayed || 0) || a.name.localeCompare(b.name)), cols = 3, colW = (W - 100 - 2 * 28) / cols;
   const rows = Math.max(1, Math.ceil(list.length / cols));
@@ -495,8 +504,8 @@ function renderWrapCanvas(sm, dateStr, logo) {
     const col = Math.floor(i / rows), row = i % rows;
     const x = 50 + col * (colW + 28), y = pTop + 14 + row * rowH, base = y + rowH * 0.7;
     g.fillStyle = "rgba(255,255,255,0.14)"; g.fillRect(x, y + rowH - 1, colW, 1.5);
-    g.fillStyle = dim; g.font = "700 " + Math.round(fs * 0.8) + "px " + FONT; g.textAlign = "right"; g.fillText(rec(p), x + colW, base);
-    const rw = g.measureText(rec(p)).width;
+    g.fillStyle = dim; g.font = "700 " + Math.round(fs * 0.8) + "px " + FONT; g.textAlign = "right"; g.fillText(recPct(p), x + colW, base);
+    const rw = g.measureText(recPct(p)).width;
     badge(p, x, base, Math.round(fs * 0.95), pic);
     const slot = slotW(fs * 0.95);
     g.fillStyle = "#fff"; g.font = "700 " + Math.round(fs) + "px " + FONT; g.textAlign = "left";
@@ -934,6 +943,7 @@ function AppInner() {
   const [gameCount, setGameCount] = useState(1);
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState([]);
+  const [gameLog, setGameLog] = useState([]); // one entry per finished game: who won / who lost (full-game players only)
 
   const [playerActionModal, setPlayerActionModal] = useState(null);
   // One-sheet player menu: view = "main" | "pick"; chosen = a specific replacement (null = next in line); beforeTip = quick break doesn't count this game
@@ -1050,6 +1060,7 @@ function AppInner() {
           setGameCount(d.gameCount ?? 1);
           setLastResult(d.lastResult ?? null);
           setHistory(d.history ?? []);
+          setGameLog(d.gameLog ?? []);
           setTimerRunning(d.timerRunning ?? false);
           setTimerDone(d.timerDone ?? false);
           setEndTime(d.endTime ?? null);
@@ -1066,12 +1077,12 @@ function AppInner() {
   // defaults this component briefly starts with.
   useEffect(() => {
     if (!firestoreReady) return;
-    const payload = sessionPayload({ view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft });
+    const payload = sessionPayload({ view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, timerRunning, timerDone, endTime, pausedSecondsLeft });
     const json = JSON.stringify(payload);
     if (json === lastSyncedSession.current) return;
     lastSyncedSession.current = json;
     setDoc(getSessionDoc(), payload).catch(err => console.error("Session write error:", err));
-  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, timerRunning, timerDone, endTime, pausedSecondsLeft]);
+  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, timerRunning, timerDone, endTime, pausedSecondsLeft]);
 
   // Custom roster persists separately from session data — surviving "Clear
   // session" and "End session" since it's about the community, not one night.
@@ -1342,8 +1353,23 @@ function AppInner() {
     // always members; typed-in names are asked directly)
     const guests = everyone.filter(p => p.isGuest);
 
+    // Best duo: the pair with the most wins together (needs 2+ games and 2+ wins together).
+    const byId = new Map(everyone.map(p => [p.id, p]));
+    const pairs = new Map();
+    gameLog.forEach(gm => [[gm.w, 1], [gm.l, 0]].forEach(([team, won]) => {
+      for (let i = 0; i < team.length; i++) for (let j = i + 1; j < team.length; j++) {
+        const a = team[i], b = team[j]; const k = a < b ? a + "|" + b : b + "|" + a;
+        const e = pairs.get(k) || { a, b, g: 0, w: 0 }; e.g++; e.w += won; pairs.set(k, e);
+      }
+    }));
+    const duos = [...pairs.values()].filter(e => e.g >= 2 && e.w >= 2 && byId.has(e.a) && byId.has(e.b))
+      .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
+    const topDuo = duos[0];
+    const bestDuo = topDuo ? { players: [byId.get(topDuo.a), byId.get(topDuo.b)], w: topDuo.w, g: topDuo.g, tied: duos.filter(e => e.w === topDuo.w && e.g === topDuo.g).length - 1 } : null;
+
     setSessionSummary({
       totalGames,
+      bestDuo,
       players: sorted,
       mostGames,
       mostWins,
@@ -1402,7 +1428,7 @@ function AppInner() {
   const finishEndSession = () => {
     setTeamA([]); setTeamB([]); setQueue([]); setSittingOut([]); setInjured([]); setLeft([]);
     setGameCount(1); setLastResult(null); setHistory([]);
-    setSetupPlayers([]); setJoinCounter(0); setNameInput("");
+    setSetupPlayers([]); setJoinCounter(0); setNameInput(""); setGameLog([]);
     setPlayerActionModal(null); setLastWinner(null); setMoveConfirm(null);
     setTimerSeconds(TIMER_DURATION); setTimerRunning(false); setTimerDone(false);
     setSessionSummary(null);
@@ -1561,7 +1587,7 @@ function AppInner() {
   };
 
   // result
-  const saveSnap = () => setHistory(prev => [...prev, { teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult }]);
+  const saveSnap = () => setHistory(prev => [...prev, { teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, gameLog }]);
   const undo = withAdmin(() => {
     if (!history.length) return;
     const p = history[history.length - 1];
@@ -1569,7 +1595,7 @@ function AppInner() {
     // up AFTER that snapshot isn't in it, so without this they'd silently vanish.
     const snapIds = new Set([...p.teamA, ...p.teamB, ...p.queue, ...p.sittingOut, ...(p.injured || []), ...p.left].map(x => x.id));
     const newcomers = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left].filter(x => !snapIds.has(x.id));
-    setTeamA(p.teamA); setTeamB(p.teamB); setQueue(newcomers.length ? sortQueue([...p.queue, ...newcomers]) : p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setHistory(h => h.slice(0, -1)); });
+    setTeamA(p.teamA); setTeamB(p.teamB); setQueue(newcomers.length ? sortQueue([...p.queue, ...newcomers]) : p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setGameLog(p.gameLog || []); setHistory(h => h.slice(0, -1)); });
 
   const recordResult = winnerIsA => {
     const winner = winnerIsA ? teamA : teamB, loser = winnerIsA ? teamB : teamA;
@@ -1577,6 +1603,8 @@ function AppInner() {
     // they entered during the team's FIRST win (they rode the whole streak).
     const winnerUpd = winner.map(p => ({ ...p, winStreak: p.injurySubGame ? (p.partialStreakTick ? (p.winStreak || 0) + 1 : (p.winStreak || 0)) : (p.winStreak || 0) + 1, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, wins: p.injurySubGame ? (p.wins || 0) : (p.wins || 0) + 1, injurySubGame: false, partialStreakTick: false }));
     const loserUpd = loser.map(p => ({ ...p, winStreak: 0, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, injurySubGame: false, partialStreakTick: false }));
+    // Remember who won and who lost (players who only subbed in mid-game are left out).
+    const logGame = () => setGameLog(prev => [...prev, { g: gameCount, w: winner.filter(p => !p.injurySubGame).map(p => p.id), l: loser.filter(p => !p.injurySubGame).map(p => p.id) }]);
     const wantsOut = gameMode === "king" ? [] : winnerUpd.filter(p => p.winStreak >= 2);
     const notStreaking = gameMode === "king" ? winnerUpd : winnerUpd.filter(p => p.winStreak < 2);
     // Only the active queue can replace streak-outs — sitting/injured players
@@ -1599,7 +1627,7 @@ function AppInner() {
       const shuffled = [...everyoneOnCourt].sort(() => Math.random() - 0.5);
       const newA = shuffled.slice(0, teamSize).map(p => ({ ...p, roundsWaited: 0 }));
       const newB = shuffled.slice(teamSize).map(p => ({ ...p, roundsWaited: 0 }));
-      saveSnap();
+      saveSnap(); logGame();
       buzz([40, 60, 40]);
       setTeamA(newA); setTeamB(newB);
       setSittingOut(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
@@ -1611,7 +1639,7 @@ function AppInner() {
       return;
     }
     const staying = [...notStreaking, ...forcedStay.map(p => ({ ...p, winStreak: 0 }))];
-    saveSnap();
+    saveSnap(); logGame();
     buzz([40, 60, 40]);
     const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
     const loserAged = loserUpd.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
