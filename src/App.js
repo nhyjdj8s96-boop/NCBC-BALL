@@ -419,7 +419,7 @@ function renderWrapCanvas(sm, dateStr, logo) {
   const awards = [
     sm.mostWins.length > 0 && ["MOST WINS", sm.mostWins, String(sm.mostWins[0].wins || 0)],
     sm.bestWinPct.length > 0 && ["BEST RECORD", sm.bestWinPct, rec(sm.bestWinPct[0])],
-    sm.bestDuo && ["BEST UNIT", sm.bestDuo.players, sm.bestDuo.w + "-" + (sm.bestDuo.g - sm.bestDuo.w), { amp: sm.bestDuo.players.length === 2, tied: sm.bestDuo.tied }],
+    sm.bestDuo && ["BEST UNIT", sm.bestDuo.players, sm.bestDuo.w + "-" + (sm.bestDuo.g - sm.bestDuo.w), { amp: sm.bestDuo.players.length === 2, groups: [sm.bestDuo.players, ...(sm.bestDuo.alts || [])] }],
     sm.mostGames.length > 0 && ["MOST GAMES", sm.mostGames, String(sm.mostGames[0].gamesPlayed || 0)],
     sm.mostLosses.length > 0 && ["MOST LOSSES", sm.mostLosses, String((sm.mostLosses[0].gamesPlayed || 0) - (sm.mostLosses[0].wins || 0))],
     sm.worstWinPct.length > 0 && ["WORST RECORD", sm.worstWinPct, rec(sm.worstWinPct[0])],
@@ -436,26 +436,23 @@ function renderWrapCanvas(sm, dateStr, logo) {
     });
     return { lines, slot };
   };
-  const planFor = maxLines => awards.map(([label, list, val, opts]) => {
+  // Every tied name is always shown. If the lists get long, the type steps down a size so the player list still fits.
+  const planFor = (fs, lineH) => awards.map(([label, list, val, opts]) => {
     const sep = opts && opts.amp ? " &" : ",";
-    let fs = 32, lineH = 40, L = layout(list, fs, sep);
-    if (L.lines.length > maxLines) { fs = 27; lineH = 34; L = layout(list, fs, sep); }
-    let extra = 0;
-    if (L.lines.length > maxLines) {
-      const keep = L.lines.slice(0, maxLines);
-      const lastLn = keep[keep.length - 1];
-      while (lastLn.length > 1 && lastLn[lastLn.length - 1].x + lastLn[lastLn.length - 1].w + 170 > NAME_MAX) lastLn.pop();
-      extra = list.length - keep.reduce((n, ln) => n + ln.length, 0);
-      L = { ...L, lines: keep };
-    }
-    const tiedText = !extra && opts && opts.tied > 0 ? "+" + opts.tied + " tied" : "";
-    return { label, val, list, fs, lineH, L, extra, sep, tiedText, h: 36 + L.lines.length * lineH + 8 };
+    const groups = opts && opts.groups ? opts.groups : [list];
+    const lines = []; let slot = 0;
+    groups.forEach(grp => { const Lg = layout(grp, fs, sep); slot = Lg.slot; Lg.lines.forEach(ln => lines.push(ln)); });
+    return { label, val, list, fs, lineH, L: { lines, slot }, sep, h: 36 + lines.length * lineH + 8 };
   });
-  // If long tie lists would squeeze the player list, show ties on one line (+N more) instead.
   const rowsNeeded = Math.max(1, Math.ceil(sm.players.length / 3));
   const heightOf = pl => pl.reduce((n, a2) => n + a2.h, 0) + 12;
-  let planned = planFor(2);
-  if (W - 40 - (226 + heightOf(planned) + 54) < rowsNeeded * 36) planned = planFor(1);
+  const fits = pl => W - 40 - (226 + heightOf(pl) + 54) >= rowsNeeded * 36;
+  const levels = [[32, 40], [27, 34], [23, 29], [20, 26]];
+  let planned = planFor(levels[0][0], levels[0][1]);
+  for (let li = 0; li < levels.length; li++) {
+    planned = planFor(levels[li][0], levels[li][1]);
+    if (planned.every(a2 => a2.L.lines.length <= 2 || a2.fs <= 23) && fits(planned)) break;
+  }
   const aTop = 226; const aH = heightOf(planned);
   if (planned.length) {
     g.fillStyle = "rgba(255,255,255,0.09)"; rr(50, aTop, W - 100, aH, 28); g.fill();
@@ -472,10 +469,6 @@ function renderWrapCanvas(sm, dateStr, logo) {
           g.fillStyle = "#fff"; g.font = "800 " + a2.fs + "px " + FONT; g.textAlign = "left";
           g.fillText(tk.p.name + (tk.last ? "" : a2.sep), 84 + tk.x + a2.L.slot, base);
         });
-        if ((a2.extra || a2.tiedText) && li === a2.L.lines.length - 1) {
-          const lt = ln[ln.length - 1]; const endX = 84 + lt.x + lt.w;
-          g.fillStyle = dim; g.fillText(a2.extra ? "+" + a2.extra + " more" : a2.tiedText, endX, base);
-        }
       });
       g.fillStyle = gold; g.font = "900 40px " + FONT; g.textAlign = "right"; g.fillText(a2.val, W - 84, y + a2.h / 2 + 14);
       y += a2.h;
@@ -1385,7 +1378,8 @@ function AppInner() {
         .sort((x, y) => y.ids.length - x.ids.length || y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
       if (near[0]) topUnit = near[0];
     }
-    const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), w: topUnit.w, g: topUnit.g, tied: units.filter(e => e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length).length - 1 } : null;
+    const sameAsTop = topUnit ? units.filter(e => e !== topUnit && e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length) : [];
+    const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), alts: sameAsTop.map(e => e.ids.map(id => byId.get(id))), w: topUnit.w, g: topUnit.g } : null;
 
     setSessionSummary({
       totalGames,
