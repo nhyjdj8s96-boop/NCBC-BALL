@@ -1375,7 +1375,13 @@ function AppInner() {
     }));
     const units = [...groups.values()].filter(e => e.g >= 2 && e.w >= 2 && e.ids.every(id => byId.has(id)))
       .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || y.ids.length - x.ids.length || x.g - y.g);
-    const topUnit = units[0];
+    // Prefer a bigger group when it is nearly as good as the best one (within 5 points of win % and at most 1 win fewer).
+    let topUnit = units[0];
+    if (topUnit) {
+      const near = units.filter(e => e.ids.length > topUnit.ids.length && e.w >= topUnit.w - 1 && e.w / e.g >= topUnit.w / topUnit.g - 0.05)
+        .sort((x, y) => y.ids.length - x.ids.length || y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
+      if (near[0]) topUnit = near[0];
+    }
     const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), w: topUnit.w, g: topUnit.g, tied: units.filter(e => e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length).length - 1 } : null;
 
     setSessionSummary({
