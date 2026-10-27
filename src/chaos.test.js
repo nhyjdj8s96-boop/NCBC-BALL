@@ -14,6 +14,18 @@ const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() 
 window.AudioContext = function () { return { state: "running", resume() {}, currentTime: 0, destination: {}, createOscillator: () => ({ connect() {}, start() {}, stop() {}, type: "", frequency: param() }), createGain: () => ({ connect() {}, gain: param() }) }; };
 window.speechSynthesis = { speak() {}, cancel() {}, getVoices: () => [] };
 window.SpeechSynthesisUtterance = function () {};
+// jsdom has no canvas. Stub just enough that the end-of-night recap image code really runs
+// (layout, wrapping, sorting, measuring) so a thrown error in it would show up here.
+let canvasDraws = 0;
+window.scrollTo = () => {};
+// jsdom never loads images; make the logo "load" so the recap draws.
+window.Image = function () { const im = { width: 409, height: 536 }; Object.defineProperty(im, "src", { set() { setTimeout(() => im.onload && im.onload(), 0); } }); return im; };
+HTMLCanvasElement.prototype.getContext = function () {
+  const ctx = { measureText: (s) => ({ width: String(s).length * 14 }), createLinearGradient: () => ({ addColorStop() {} }) };
+  return new Proxy(ctx, { get: (o, k) => (k in o ? o[k] : (k === "canvas" ? this : () => { canvasDraws++; })), set: () => true });
+};
+HTMLCanvasElement.prototype.toBlob = function (cb) { cb(new Blob(["x"], { type: "image/png" })); };
+URL.createObjectURL = () => "blob:test"; URL.revokeObjectURL = () => {};
 
 function mulberry(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const mk = (n, i) => ({ id: "p" + i, name: "Player" + (i + 1), joinOrder: i + 1, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: i % 5 === 4 });
@@ -68,15 +80,37 @@ async function chaos(N, mode, steps, seed) {
         }
       } else if (r < 0.77) {
         goTab("roster");
-        const input = screen.getByPlaceholderText("Your name");
-        fireEvent.change(input, { target: { value: "Latecomer" + (++late) } });
-        fireEvent.click(screen.getByText("+")); fireEvent.click(screen.getByRole("button", { name: /Guest just for tonight/ })); expected++; bump("lateJoin");
+        fireEvent.click(screen.getByRole("button", { name: /Join the run/ }));
+        const v = rnd();
+        if (v < 0.5) {
+          const adds = screen.queryAllByText("Add").map(e => e.closest("button")).filter(Boolean);
+          if (adds.length) { fireEvent.click(adds[Math.floor(rnd() * adds.length)]); expected++; bump("joinMember"); }
+          if (rnd() < 0.5) { fireEvent.change(screen.getByPlaceholderText(/Search members/), { target: { value: "a" } }); bump("joinSearch"); }
+          fireEvent.click(screen.getByRole("button", { name: "Done" }));
+        } else if (v < 0.85) {
+          fireEvent.change(screen.getByPlaceholderText(/Search members/), { target: { value: "Latecomer" + (++late) } });
+          fireEvent.click(screen.getByRole("button", { name: /as a new name/ })); fireEvent.click(screen.getByRole("button", { name: /Guest just for tonight/ })); expected++; bump("lateJoin");
+        } else {
+          fireEvent.click(screen.getByRole("button", { name: "Done" })); bump("joinCancel");
+        }
+        if (screen.queryByPlaceholderText(/Search members/)) violations.push("step " + i + ": join sheet left open");
       } else if (r < 0.82) {
         goTab("game"); const u = screen.queryByText(/Undo last result/); if (u) { fireEvent.click(u); bump("undo"); }
       } else if (r < 0.89) {
         goTab("game");
         const t = [/^▶$/, /^⏸$/, /^-1m$/, /^\+10s$/, /^■$/].map(re => screen.queryByText(re)).filter(Boolean);
         if (t.length) { fireEvent.click(t[Math.floor(rnd() * t.length)]); bump("timer"); }
+      } else if (r < 0.915) {
+        goTab("game"); fireEvent.click(screen.getByText(/Home Wins/)); fireEvent.click(screen.getByText(/Away Wins/)); bump("doubleWin");
+      } else if (r < 0.935) {
+        const before = read();
+        fireEvent.click(screen.getByRole("button", { name: "End session" })); fireEvent.click(screen.getByRole("button", { name: "Yes, end session" }));
+        screen.getByRole("button", { name: "Share image" }); screen.getByText("Done — clear session");
+        await screen.findByAltText("Monday Night Ball recap");
+        fireEvent.click(screen.getByText("Go back — keep playing"));
+        if (JSON.stringify(read()) !== JSON.stringify(before)) violations.push("step " + i + ": recap changed the live session");
+        if (screen.queryByRole("button", { name: "Share image" })) violations.push("step " + i + ": recap did not close");
+        bump("recap");
       } else if (r < 0.95) {
         goTab("log"); screen.getByText("Attendance"); goTab("game"); bump("tabHop");
       } else {
@@ -108,7 +142,7 @@ async function chaos(N, mode, steps, seed) {
 }
 
 const results = [];
-afterAll(() => { console.log("CHAOS RESULTS\n" + results.map(r => JSON.stringify(r)).join("\n")); });
+afterAll(() => { console.log("canvas draw calls (recap code ran): " + canvasDraws); console.log("CHAOS RESULTS\n" + results.map(r => JSON.stringify(r)).join("\n")); });
 
 test.each([[10, "rotate", 1], [11, "king", 2], [13, "rotate", 3], [16, "king", 4], [18, "rotate", 5], [20, "rotate", 6], [22, "king", 7], [24, "rotate", 8], [24, "king", 9], [12, "rotate", 10]])("chaos N=%i %s seed %i", async (N, mode, seed) => {
   const r = await chaos(N, mode, 250, seed * 1013);
