@@ -30,6 +30,18 @@ URL.createObjectURL = () => "blob:test"; URL.revokeObjectURL = () => {};
 function mulberry(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const mk = (n, i) => ({ id: "p" + i, name: "Player" + (i + 1), joinOrder: i + 1, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: i % 5 === 4 });
 const read = () => JSON.parse(localStorage.getItem("local_ncbc-main"));
+// Tap a win button, then either type a final score or skip it (score sheet).
+function winAndScore(home, rnd) {
+  fireEvent.click(screen.getByText(home ? /Home Wins/ : /Away Wins/));
+  if (rnd() < 0.5) {
+    const hi = String(11 + Math.floor(rnd() * 11)), lo = String(Math.floor(rnd() * 11));
+    fireEvent.change(screen.getByLabelText("HOME score"), { target: { value: home ? hi : lo } });
+    fireEvent.change(screen.getByLabelText("AWAY score"), { target: { value: home ? lo : hi } });
+    fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  } else {
+    fireEvent.click(screen.getByRole("button", { name: "Skip score" }));
+  }
+}
 const label = (t) => screen.getByText(t, { selector: "span" });
 
 async function chaos(N, mode, steps, seed) {
@@ -49,7 +61,7 @@ async function chaos(N, mode, steps, seed) {
     const r = rnd();
     try {
       if (r < 0.30) {
-        goTab("game"); fireEvent.click(screen.getByText(rnd() < 0.5 ? /Home Wins/ : /Away Wins/)); bump("win");
+        goTab("game"); winAndScore(rnd() < 0.5, rnd); bump("win");
       } else if (r < 0.50 && pool >= 1) {
         goTab("game");
         const court = [...st0.teamA, ...st0.teamB]; const who = court[Math.floor(rnd() * court.length)];
@@ -101,7 +113,7 @@ async function chaos(N, mode, steps, seed) {
         const t = [/^▶$/, /^⏸$/, /^-1m$/, /^\+10s$/, /^■$/].map(re => screen.queryByText(re)).filter(Boolean);
         if (t.length) { fireEvent.click(t[Math.floor(rnd() * t.length)]); bump("timer"); }
       } else if (r < 0.915) {
-        goTab("game"); fireEvent.click(screen.getByText(/Home Wins/)); fireEvent.click(screen.getByText(/Away Wins/)); bump("doubleWin");
+        goTab("game"); winAndScore(true, rnd); winAndScore(false, rnd); bump("doubleWin");
       } else if (r < 0.935) {
         const before = read();
         fireEvent.click(screen.getByRole("button", { name: "End session" })); fireEvent.click(screen.getByRole("button", { name: "Yes, end session" }));

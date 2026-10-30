@@ -765,7 +765,7 @@ function AttendanceScreen({ attendanceLog, onBack, embedded }) {
   // Always sort by date, most recent first — enforced here at render time
   // rather than just trusting whatever order the data was written in.
   const sortedLog = [...attendanceLog]
-    .map(entry => ({ date: entry.date, attendees: normalize(entry) }))
+    .map(entry => ({ date: entry.date, attendees: normalize(entry), games: entry.games || [] }))
     .sort((a, b) => b.date.localeCompare(a.date));
 
   // When searching, show every date a matching name appears, most recent
@@ -819,6 +819,18 @@ function AttendanceScreen({ attendanceLog, onBack, embedded }) {
                 <div>
                   <p style={s.attendanceGroupLabel}>👋 Guests ({guests.length})</p>
                   <p style={s.attendanceNameList}>{guests.map(a => a.name).join(", ")}</p>
+                </div>
+              )}
+              {!q && entry.games.some(gm => gm.ws != null) && (
+                <div style={{ marginTop: 10 }}>
+                  <p style={s.attendanceGroupLabel}>🏀 Scores</p>
+                  {entry.games.filter(gm => gm.ws != null).map(gm => (
+                    <p key={gm.g} style={{ ...s.attendanceNameList, display: "flex", gap: 8 }}>
+                      <span style={{ width: 28, flexShrink: 0, color: COLOR.secondaryLabel }}>G{gm.g}</span>
+                      <span style={{ flex: 1, minWidth: 0 }}>{gm.side === "A" ? "Home" : gm.side === "B" ? "Away" : "Winners"}: {gm.w.join(", ")}</span>
+                      <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{gm.ws}–{gm.ls}</span>
+                    </p>
+                  ))}
                 </div>
               )}
             </div>
@@ -944,7 +956,10 @@ function AppInner() {
   const [gameCount, setGameCount] = useState(1);
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState([]);
-  const [gameLog, setGameLog] = useState([]); // one entry per finished game: who won / who lost (full-game players only)
+  const [gameLog, setGameLog] = useState([]); // one entry per finished game: who won / who lost (full-game players only), side ("A"/"B") and optional final score (ws/ls)
+  // Final-score sheet. { winnerIsA, a, b } for a new result, or { editIdx, winnerIsA, a, b } when fixing a past game's score.
+  const [scorePrompt, setScorePrompt] = useState(null);
+  const [showAllScores, setShowAllScores] = useState(false);
 
   const [playerActionModal, setPlayerActionModal] = useState(null);
   // One-sheet player menu: view = "main" | "pick"; chosen = a specific replacement (null = next in line); beforeTip = quick break doesn't count this game
@@ -1407,9 +1422,17 @@ function AppInner() {
     const nowD = new Date();
     const today = nowD.getFullYear() + "-" + String(nowD.getMonth() + 1).padStart(2, "0") + "-" + String(nowD.getDate()).padStart(2, "0");
     const attendees = everyone.map(p => ({ name: p.name, isGuest: !!p.isGuest }));
+    // Keep tonight's game-by-game results with the attendance entry so scores
+    // survive the session clear. Names, not ids — ids are reused every night.
+    const games = gameLog.map(gm => {
+      const out = { g: gm.g, w: (gm.w || []).map(id => byId.get(id)?.name).filter(Boolean), l: (gm.l || []).map(id => byId.get(id)?.name).filter(Boolean) };
+      if (gm.side) out.side = gm.side;
+      if (gm.ws != null && gm.ls != null) { out.ws = gm.ws; out.ls = gm.ls; }
+      return out;
+    });
     setAttendanceLog(prev => {
       const withoutToday = prev.filter(e => e.date !== today);
-      const updated = [...withoutToday, { date: today, attendees }].sort((a, b) => b.date.localeCompare(a.date));
+      const updated = [...withoutToday, { date: today, attendees, ...(games.length ? { games } : {}) }].sort((a, b) => b.date.localeCompare(a.date));
       setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
       return updated;
     });
@@ -1616,14 +1639,17 @@ function AppInner() {
     const newcomers = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left].filter(x => !snapIds.has(x.id));
     setTeamA(p.teamA); setTeamB(p.teamB); setQueue(newcomers.length ? sortQueue([...p.queue, ...newcomers]) : p.queue); setSittingOut(p.sittingOut); setInjured(p.injured || []); setLeft(p.left); setGameCount(p.gameCount ?? 0); setLastResult(p.lastResult ?? null); setGameLog(p.gameLog || []); setHistory(h => h.slice(0, -1)); });
 
-  const recordResult = winnerIsA => {
+  // score: { ws, ls } (winner's points, loser's points) or null when nobody entered one.
+  const recordResult = (winnerIsA, score = null) => {
     const winner = winnerIsA ? teamA : teamB, loser = winnerIsA ? teamB : teamA;
+    const scoreTag = score ? (winnerIsA ? "Home " : "Away ") + score.ws + "–" + score.ls : null;
+    const setLastResultScored = r => setLastResult(scoreTag ? { ...r, score: scoreTag } : r);
     // Partial-game subs: stats never count, but the rotation clock ticks if
     // they entered during the team's FIRST win (they rode the whole streak).
     const winnerUpd = winner.map(p => ({ ...p, winStreak: p.injurySubGame ? (p.partialStreakTick ? (p.winStreak || 0) + 1 : (p.winStreak || 0)) : (p.winStreak || 0) + 1, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, wins: p.injurySubGame ? (p.wins || 0) : (p.wins || 0) + 1, injurySubGame: false, partialStreakTick: false }));
     const loserUpd = loser.map(p => ({ ...p, winStreak: 0, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, injurySubGame: false, partialStreakTick: false }));
     // Remember who won and who lost (players who only subbed in mid-game are left out).
-    const logGame = () => setGameLog(prev => [...prev, { g: gameCount, w: winner.filter(p => !p.injurySubGame).map(p => p.id), l: loser.filter(p => !p.injurySubGame).map(p => p.id) }]);
+    const logGame = () => setGameLog(prev => [...prev, { g: gameCount, side: winnerIsA ? "A" : "B", w: winner.filter(p => !p.injurySubGame).map(p => p.id), l: loser.filter(p => !p.injurySubGame).map(p => p.id), ...(score ? { ws: score.ws, ls: score.ls } : {}) }]);
     const wantsOut = gameMode === "king" ? [] : winnerUpd.filter(p => p.winStreak >= 2);
     const notStreaking = gameMode === "king" ? winnerUpd : winnerUpd.filter(p => p.winStreak < 2);
     // Only the active queue can replace streak-outs — sitting/injured players
@@ -1652,7 +1678,7 @@ function AppInner() {
       setSittingOut(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
       setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
       setAnimKey(k => k + 1); setLastWinner(null);
-      setLastResult({ winner: "Teams shuffled — 2 straight wins, no one waiting to sub in", loser: "" });
+      setLastResultScored({ winner: "Teams shuffled — 2 straight wins, no one waiting to sub in", loser: "" });
       setGameCount(g => g + 1);
       resetTimer();
       return;
@@ -1687,14 +1713,62 @@ function AppInner() {
     setAnimKey(k => k + 1); setLastWinner(winnerIsA ? "A" : "B");
     const fc = wantsOut.length - replaceable;
     const hw = winnerIsA ? "Home" : "Away", lw = winnerIsA ? "Away" : "Home";
-    if (streakOut.length === teamSize) setLastResult({ winner: "Full streak — entire team rotates off", loser: "" });
-    else if (streakOut.length > 0 && fc > 0) setLastResult({ winner: hw + " stays on - " + streakOut.length + " streak players rotate out", loser: fc + " streak player(s) forced to stay — short queue" });
-    else if (streakOut.length > 0) setLastResult({ winner: hw + " stays on - " + streakOut.length + " streak player(s) rotate out", loser: lw + " sits" });
-    else setLastResult({ winner: hw + " stays on", loser: lw + " sits" });
+    if (streakOut.length === teamSize) setLastResultScored({ winner: "Full streak — entire team rotates off", loser: "" });
+    else if (streakOut.length > 0 && fc > 0) setLastResultScored({ winner: hw + " stays on - " + streakOut.length + " streak players rotate out", loser: fc + " streak player(s) forced to stay — short queue" });
+    else if (streakOut.length > 0) setLastResultScored({ winner: hw + " stays on - " + streakOut.length + " streak player(s) rotate out", loser: lw + " sits" });
+    else setLastResultScored({ winner: hw + " stays on", loser: lw + " sits" });
     setGameCount(g => g + 1);
     // A fresh game means a fresh clock — reset back to the full game length
     // automatically rather than making someone remember to tap Reset.
     resetTimer();
+  };
+
+  // ── FINAL SCORE ─────────────────────────────────────────────────────────────
+  // Tapping Home/Away Wins opens a small sheet to type the final score. Most
+  // nights play to the same number, so the winner's box is pre-filled with
+  // the last winning score — usually only the loser's points need typing.
+  const lastWinningScore = () => { for (let i = gameLog.length - 1; i >= 0; i--) if (gameLog[i].ws != null) return String(gameLog[i].ws); return ""; };
+  const openScore = winnerIsA => {
+    const w = lastWinningScore();
+    setScorePrompt({ winnerIsA, a: winnerIsA ? w : "", b: winnerIsA ? "" : w, err: "" });
+  };
+  const editScore = withAdmin(idx => {
+    const gm = gameLog[idx];
+    if (!gm) return;
+    const winnerIsA = gm.side !== "B";
+    const ws = gm.ws != null ? String(gm.ws) : lastWinningScore(), ls = gm.ls != null ? String(gm.ls) : "";
+    setScorePrompt({ editIdx: idx, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
+  });
+  const submitScore = skip => {
+    const sp = scorePrompt;
+    if (!sp) return;
+    let score = null;
+    if (!skip) {
+      const a = sp.a.trim(), b = sp.b.trim();
+      if (a !== "" || b !== "") {
+        if (a === "" || b === "") { setScorePrompt({ ...sp, err: "Enter both scores, or tap Skip score." }); return; }
+        const na = parseInt(a, 10), nb = parseInt(b, 10);
+        if (!(na >= 0 && na < 1000 && nb >= 0 && nb < 1000)) { setScorePrompt({ ...sp, err: "Scores must be whole numbers." }); return; }
+        const ws = sp.winnerIsA ? na : nb, ls = sp.winnerIsA ? nb : na;
+        if (ws <= ls) { setScorePrompt({ ...sp, err: (sp.winnerIsA ? "Home" : "Away") + " won, so " + (sp.winnerIsA ? "Home" : "Away") + "'s score has to be higher." }); return; }
+        score = { ws, ls };
+      }
+    }
+    setScorePrompt(null);
+    if (sp.editIdx != null) {
+      // Fixing a past game only touches its score — the rotation already happened.
+      setGameLog(prev => prev.map((gm, i) => {
+        if (i !== sp.editIdx) return gm;
+        const { ws, ls, ...rest } = gm;
+        return score ? { ...rest, ws: score.ws, ls: score.ls } : rest;
+      }));
+      if (sp.editIdx === gameLog.length - 1 && lastResult) {
+        const { score: _old, ...rest } = lastResult;
+        setLastResult(score ? { ...rest, score: (sp.winnerIsA ? "Home " : "Away ") + score.ws + "–" + score.ls } : rest);
+      }
+      return;
+    }
+    recordResult(sp.winnerIsA, score);
   };
 
   const loadTest = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return { ...initPlayer(n, jc), isGuest: true }; })); setJoinCounter(jc); });
@@ -1895,6 +1969,17 @@ function AppInner() {
   const memberCount = totalTonight - guestCount;
   const sortedQ = sortQueue(queue);
   const pool = sortQueue([...queue, ...sittingOut]);
+  // Game-by-game scoreboard, newest first. Names come from tonight's players.
+  const nameById = new Map([...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left].map(p => [p.id, p.name]));
+  const scoreRows = gameLog.map((gm, idx) => ({
+    idx,
+    g: gm.g,
+    team: gm.side === "A" ? "Home" : gm.side === "B" ? "Away" : null,
+    scored: gm.ws != null && gm.ls != null,
+    ws: gm.ws, ls: gm.ls,
+    winners: (gm.w || []).map(id => nameById.get(id)).filter(Boolean).join(", "),
+  })).reverse();
+  const scoreRowsShown = showAllScores ? scoreRows : scoreRows.slice(0, 3);
   const pam = playerActionModal;
   const pamNext = pam ? getIncoming() : null;
   const pamIncoming = pam ? (pamUi.chosen || pamNext) : null;
@@ -2073,6 +2158,49 @@ function AppInner() {
         </div>
       )}
 
+      {scorePrompt && (() => {
+        const sp = scorePrompt, editing = sp.editIdx != null;
+        const awayColor = COLOR === COLOR_DARK ? "#64B5F6" : "#007AFF";
+        const winColor = sp.winnerIsA ? "#FF9500" : "#007AFF";
+        const winName = sp.winnerIsA ? "Home" : "Away";
+        // Focus the first box that still needs a number (usually the loser's, since the winner's is pre-filled).
+        const winKey = sp.winnerIsA ? "a" : "b", loseKey = sp.winnerIsA ? "b" : "a";
+        const focusKey = sp[winKey] === "" ? winKey : loseKey;
+        const field = (key, label, color, won) => (
+          <label style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color }}>{label}{won ? " · WON" : ""}</span>
+            <input type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} placeholder="pts"
+              autoFocus={key === focusKey}
+              value={sp[key]}
+              onChange={e => setScorePrompt({ ...sp, [key]: e.target.value.replace(/[^0-9]/g, ""), err: "" })}
+              onKeyDown={e => { if (e.key === "Enter") submitScore(false); }}
+              aria-label={label + " score"}
+              style={{ width: "100%", height: 72, boxSizing: "border-box", textAlign: "center", fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: "2px solid " + (won ? color : COLOR.separator), borderRadius: 14, background: COLOR.tertiarySystemBackground, color: COLOR.label, outline: "none", fontFamily: "inherit" }} />
+          </label>
+        );
+        return (
+          <div style={s.overlay} onClick={() => setScorePrompt(null)}>
+            <div style={s.modal} onClick={e => e.stopPropagation()}>
+              <div style={s.modalGrabber} />
+              <p style={s.modalTitle}>{editing ? "Game " + (gameLog[sp.editIdx] ? gameLog[sp.editIdx].g : "") + " score" : winName + " wins — final score?"}</p>
+              <p style={s.modalDesc}>{editing ? "Only the score changes. Teams and rotation stay as they are." : "Optional. Skip it if nobody kept score."}</p>
+              <div style={{ display: "flex", alignItems: "flex-end", gap: 12, margin: "4px 0 6px" }}>
+                {field("a", "HOME", "#FF9500", sp.winnerIsA)}
+                <span style={{ fontSize: 28, fontWeight: 600, color: COLOR.secondaryLabel, paddingBottom: 18 }} aria-hidden="true">–</span>
+                {field("b", "AWAY", awayColor, !sp.winnerIsA)}
+              </div>
+              {sp.err && <p role="alert" style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600, color: "#FF3B30", textAlign: "center" }}>{sp.err}</p>}
+              <button onClick={() => submitScore(false)}
+                style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: winColor, color: "#fff", fontSize: 17, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", marginTop: 4 }}>
+                {editing ? "Save score" : "Save result"}
+              </button>
+              <button style={s.btnCancel} onClick={() => submitScore(true)}>{editing ? "Remove score" : "Skip score"}</button>
+              <button style={s.btnCancel} onClick={() => setScorePrompt(null)}>Cancel</button>
+            </div>
+          </div>
+        );
+      })()}
+
       {endSessionConfirm && (
         <div style={s.overlay} onClick={() => setEndSessionConfirm(false)}>
           <div style={s.modal} onClick={e => e.stopPropagation()}>
@@ -2175,13 +2303,13 @@ function AppInner() {
 
       {isAdmin && (
         <div style={s.btnRow}>
-          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => recordResult(true)}>🏆 Home Wins</button>
-          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => recordResult(false)}>🏆 Away Wins</button>
+          <button style={{ ...s.winBtn, background: "#FF9500" }} onClick={() => openScore(true)}>🏆 Home Wins</button>
+          <button style={{ ...s.winBtn, background: "#007AFF" }} onClick={() => openScore(false)}>🏆 Away Wins</button>
         </div>
       )}
       <div style={s.resultRow}>
         <span style={s.resultText}>
-          {lastResult ? (<>{lastResult.winner && <span style={s.bannerWin}>{lastResult.winner}</span>}{lastResult.loser && <span style={s.bannerLose}> - {lastResult.loser}</span>}</>) : <span style={s.bannerLose}>No games yet</span>}
+          {lastResult ? (<>{lastResult.score && <span style={{ ...s.bannerWin, fontVariantNumeric: "tabular-nums" }}>{lastResult.score} · </span>}{lastResult.winner && <span style={s.bannerWin}>{lastResult.winner}</span>}{lastResult.loser && <span style={s.bannerLose}> - {lastResult.loser}</span>}</>) : <span style={s.bannerLose}>No games yet</span>}
         </span>
         {isAdmin && history.length > 0 && <button style={s.undoLink} onClick={undo}>↩ Undo</button>}
       </div>
@@ -2221,6 +2349,41 @@ function AppInner() {
           <p style={{ ...s.emptyStateSub, textAlign: "left", padding: "0 20px" }}>Nobody waiting. Everyone signed up is on the court.</p>
         )}
       </div>
+
+      {scoreRows.length > 0 && (
+        <div style={{ ...s.card, margin: "12px 16px 0", padding: 0 }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", padding: "12px 16px 6px" }}>
+            <span style={{ ...s.sectionLabel, margin: 0 }}>Scores tonight</span>
+            {isAdmin && <span style={{ fontSize: 12, color: COLOR.secondaryLabel }}>Tap a game to fix its score</span>}
+          </div>
+          {scoreRowsShown.map(r => {
+            const teamColor = r.team === "Home" ? "#FF9500" : COLOR === COLOR_DARK ? "#64B5F6" : "#007AFF";
+            const Row = isAdmin ? "button" : "div";
+            return (
+              <Row key={r.idx} onClick={isAdmin ? () => editScore(r.idx) : undefined} className={isAdmin ? "native-row" : ""}
+                aria-label={isAdmin ? "Edit score for game " + r.g : undefined}
+                style={{ display: "flex", alignItems: "center", gap: 12, width: "100%", minHeight: 48, padding: "8px 16px", border: "none", borderTop: "0.5px solid " + COLOR.separator, background: "none", color: COLOR.label, fontFamily: "inherit", textAlign: "left", cursor: isAdmin ? "pointer" : "default", boxSizing: "border-box" }}>
+                <span style={{ width: 30, flexShrink: 0, fontSize: 12, fontWeight: 700, color: COLOR.secondaryLabel }}>G{r.g}</span>
+                <span style={{ flex: 1, minWidth: 0 }}>
+                  <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>
+                    {r.team ? <span style={{ color: teamColor }}>{r.team} won</span> : "Won"}
+                  </span>
+                  {r.winners && <span style={{ display: "block", fontSize: 12, color: COLOR.secondaryLabel, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.winners}</span>}
+                </span>
+                {r.scored
+                  ? <span style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{r.ws}<span style={{ color: COLOR.secondaryLabel, fontWeight: 500 }}>–</span>{r.ls}</span>
+                  : <span style={{ fontSize: 13, color: isAdmin ? COLOR.tint : COLOR.secondaryLabel, fontWeight: 600, flexShrink: 0 }}>{isAdmin ? "+ Add score" : "No score"}</span>}
+              </Row>
+            );
+          })}
+          {scoreRows.length > 3 && (
+            <button onClick={() => setShowAllScores(v => !v)}
+              style={{ width: "100%", height: 44, border: "none", borderTop: "0.5px solid " + COLOR.separator, background: "none", color: COLOR.tint, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+              {showAllScores ? "Show fewer" : "Show all " + scoreRows.length + " games"}
+            </button>
+          )}
+        </div>
+      )}
 
       {isAdmin && (
         <div style={{ margin: "10px 16px 0" }}>
