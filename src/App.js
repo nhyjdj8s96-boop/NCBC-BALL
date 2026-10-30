@@ -1724,11 +1724,10 @@ function AppInner() {
   };
 
   // ── FINAL SCORE ─────────────────────────────────────────────────────────────
-  // Tapping Home/Away Wins opens a small sheet to type the final score. Both
-  // boxes start empty: games go to 9 or 11, or stop wherever they are when the
-  // 8-minute clock runs out, so there's no safe number to pre-fill. The sheet
-  // offers 9 and 11 as one-tap picks for the winner instead.
-  const WIN_TARGETS = [9, 11];
+  // Tapping Home/Away Wins opens a small sheet for the final score. Both
+  // boxes start blank: games go to 9 or 11, or stop wherever they are when the
+  // 8-minute clock runs out, so there's no safe number to pre-fill. Scores are
+  // picked from a 0-11 pad (no keyboard).
   const openScore = winnerIsA => setScorePrompt({ winnerIsA, a: "", b: "", err: "" });
   const editScore = withAdmin(idx => {
     const gm = gameLog[idx];
@@ -2161,49 +2160,43 @@ function AppInner() {
         const awayColor = COLOR === COLOR_DARK ? "#64B5F6" : "#007AFF";
         const winColor = sp.winnerIsA ? "#FF9500" : "#007AFF";
         const winName = sp.winnerIsA ? "Home" : "Away";
-        // Focus the first box that still needs a number.
+        // No keyboard: a 0-11 pad fills whichever box is selected. It starts on
+        // the winner's box and moves to the loser's box after the first tap.
         const winKey = sp.winnerIsA ? "a" : "b", loseKey = sp.winnerIsA ? "b" : "a";
-        const focusKey = sp[winKey] === "" ? winKey : loseKey;
-        // Tapping 9 or 11 fills the winner's box and jumps to the loser's box.
-        const pickTarget = n => {
-          setScorePrompt({ ...sp, [winKey]: String(n), err: "" });
-          setTimeout(() => { const el = document.getElementById("score-" + loseKey); if (el) el.focus(); }, 0);
+        const active = sp.active || (sp[winKey] === "" ? winKey : sp[loseKey] === "" ? loseKey : winKey);
+        const colorOf = key => key === "a" ? "#FF9500" : awayColor;
+        const tapNumber = n => setScorePrompt({ ...sp, [active]: String(n), active: active === winKey ? loseKey : active, err: "" });
+        const box = (key, label, won) => {
+          const on = key === active, color = colorOf(key);
+          return (
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color }}>{label}{won ? " · WON" : ""}</span>
+              <button type="button" onClick={() => setScorePrompt({ ...sp, active: key })} aria-label={label + " score"} aria-pressed={on}
+                style={{ width: "100%", height: 72, boxSizing: "border-box", textAlign: "center", fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: (on ? "3px solid " : "2px solid ") + (on ? color : COLOR.separator), borderRadius: 14, background: COLOR.tertiarySystemBackground, color: sp[key] === "" ? COLOR.tertiaryLabel : COLOR.label, fontFamily: "inherit", cursor: "pointer", padding: 0 }}>
+                {sp[key] === "" ? "–" : sp[key]}
+              </button>
+            </div>
+          );
         };
-        const field = (key, label, color, won) => (
-          <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-            <label htmlFor={"score-" + key} style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color }}>{label}{won ? " · WON" : ""}</label>
-            <input id={"score-" + key} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} placeholder="pts"
-              autoFocus={key === focusKey}
-              value={sp[key]}
-              onChange={e => setScorePrompt({ ...sp, [key]: e.target.value.replace(/[^0-9]/g, ""), err: "" })}
-              onKeyDown={e => { if (e.key === "Enter") submitScore(false); }}
-              aria-label={label + " score"}
-              style={{ width: "100%", height: 72, boxSizing: "border-box", textAlign: "center", fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: "2px solid " + (won ? color : COLOR.separator), borderRadius: 14, background: COLOR.tertiarySystemBackground, color: COLOR.label, outline: "none", fontFamily: "inherit" }} />
-            {won ? (
-              <div style={{ display: "flex", gap: 8, width: "100%" }}>
-                {WIN_TARGETS.map(n => {
-                  const on = sp[key] === String(n);
-                  return (
-                    <button key={n} type="button" onClick={() => pickTarget(n)} aria-label={"Won with " + n} aria-pressed={on}
-                      style={{ flex: 1, height: 44, border: "none", borderRadius: 12, background: on ? color : COLOR.tertiarySystemBackground, color: on ? "#fff" : COLOR.label, fontSize: 18, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>{n}</button>
-                  );
-                })}
-              </div>
-            ) : (
-              <span style={{ height: 44 }} aria-hidden="true" />
-            )}
-          </div>
-        );
         return (
           <div style={s.overlay} onClick={() => setScorePrompt(null)}>
             <div style={s.modal} onClick={e => e.stopPropagation()}>
               <div style={s.modalGrabber} />
               <p style={s.modalTitle}>{editing ? "Game " + (gameLog[sp.editIdx] ? gameLog[sp.editIdx].g : "") + " score" : winName + " wins — final score?"}</p>
-              <p style={s.modalDesc}>{editing ? "Only the score changes. Teams and rotation stay as they are." : "Tap 9 or 11, or type it if the clock ran out. Optional."}</p>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, margin: "4px 0 10px" }}>
-                {field("a", "HOME", "#FF9500", sp.winnerIsA)}
+              <p style={s.modalDesc}>{editing ? "Only the score changes. Teams and rotation stay as they are." : "Tap " + winName + "'s points, then " + (sp.winnerIsA ? "Away" : "Home") + "'s. Optional."}</p>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, margin: "4px 0 12px", width: "100%", alignSelf: "stretch" }}>
+                {box("a", "HOME", sp.winnerIsA)}
                 <span style={{ fontSize: 28, fontWeight: 600, color: COLOR.secondaryLabel, marginTop: 38 }} aria-hidden="true">–</span>
-                {field("b", "AWAY", awayColor, !sp.winnerIsA)}
+                {box("b", "AWAY", !sp.winnerIsA)}
+              </div>
+              <div role="group" aria-label={(active === "a" ? "Home" : "Away") + " points"} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 12, width: "100%", alignSelf: "stretch" }}>
+                {Array.from({ length: 12 }, (_, n) => {
+                  const picked = sp[active] === String(n);
+                  return (
+                    <button key={n} type="button" onClick={() => tapNumber(n)} aria-pressed={picked}
+                      style={{ height: 48, border: "none", borderRadius: 12, background: picked ? colorOf(active) : COLOR.tertiarySystemBackground, color: picked ? "#fff" : COLOR.label, fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFamily: "inherit", cursor: "pointer" }}>{n}</button>
+                  );
+                })}
               </div>
               {sp.err && <p role="alert" style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600, color: "#FF3B30", textAlign: "center" }}>{sp.err}</p>}
               <button onClick={() => submitScore(false)}

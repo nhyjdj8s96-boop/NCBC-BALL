@@ -1,4 +1,4 @@
-// Per-game scores: entry, validation, skip, pre-fill, editing a past game, undo.
+// Per-game scores: 0-11 pad entry, validation, skip, blank start, editing a past game, undo.
 import React from "react";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 
@@ -9,9 +9,10 @@ const App = require("./App").default;
 
 const mk = (n, i) => ({ id: "p" + i, name: "Player" + (i + 1), joinOrder: i + 1, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: true });
 const read = () => JSON.parse(localStorage.getItem("local_ncbc-main"));
-const home = () => screen.getByLabelText("HOME score");
-const away = () => screen.getByLabelText("AWAY score");
-const type = (el, v) => fireEvent.change(el, { target: { value: v } });
+const box = (team) => screen.getByRole("button", { name: team + " score" });
+const tap = (n) => fireEvent.click(screen.getByRole("button", { name: String(n) }));
+const pick = (team, n) => { fireEvent.click(box(team)); tap(n); };
+const save = (name = "Save result") => fireEvent.click(screen.getByRole("button", { name }));
 
 async function start() {
   localStorage.clear();
@@ -23,34 +24,29 @@ async function start() {
 
 afterEach(() => cleanup());
 
-test("records a final score with the game and shows it", async () => {
+test("two taps on the pad record the score: winner first, then loser", async () => {
   await start();
   const before = read().gameCount;
   fireEvent.click(screen.getByText(/Home Wins/));
   expect(read().gameCount).toBe(before); // nothing recorded until the sheet is answered
-  type(home(), "21"); type(away(), "17");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  tap(11); tap(8); save();
   const st = read();
   expect(st.gameCount).toBe(before + 1);
-  expect(st.gameLog).toHaveLength(1);
-  expect(st.gameLog[0]).toMatchObject({ side: "A", ws: 21, ls: 17 });
-  expect(st.lastResult.score).toBe("Home 21–17");
+  expect(st.gameLog[0]).toMatchObject({ side: "A", ws: 11, ls: 8 });
+  expect(st.lastResult.score).toBe("Home 11–8");
   expect(screen.getByText("Scores tonight")).toBeTruthy();
 });
 
-test("rejects a score where the winner has fewer points, and half-filled scores", async () => {
+test("rejects a winner with fewer points, and a half-filled score", async () => {
   await start();
   fireEvent.click(screen.getByText(/Away Wins/));
-  type(home(), "21"); type(away(), "15");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  tap(9); save();
+  expect(screen.getByRole("alert").textContent).toMatch(/Enter both scores/);
+  pick("HOME", 10); save();
   expect(screen.getByRole("alert").textContent).toMatch(/Away's score has to be higher/);
   expect(read().gameLog || []).toHaveLength(0);
-  type(home(), "");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
-  expect(screen.getByRole("alert").textContent).toMatch(/Enter both scores/);
-  type(home(), "12");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
-  expect(read().gameLog[0]).toMatchObject({ side: "B", ws: 15, ls: 12 });
+  pick("HOME", 6); save();
+  expect(read().gameLog[0]).toMatchObject({ side: "B", ws: 9, ls: 6 });
 });
 
 test("skip records the game with no score; cancel records nothing", async () => {
@@ -66,19 +62,13 @@ test("skip records the game with no score; cancel records nothing", async () => 
   expect(screen.getByText("+ Add score")).toBeTruthy();
 });
 
-test("boxes start empty every game; 9 and 11 fill the winner's box", async () => {
+test("both boxes start blank every game", async () => {
   await start();
   fireEvent.click(screen.getByText(/Home Wins/));
-  type(home(), "11"); type(away(), "7");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  tap(11); tap(7); save();
   fireEvent.click(screen.getByText(/Away Wins/));
-  expect(home().value).toBe("");
-  expect(away().value).toBe("");
-  fireEvent.click(screen.getByRole("button", { name: "Won with 9" }));
-  expect(away().value).toBe("9");
-  type(home(), "6");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
-  expect(read().gameLog[1]).toMatchObject({ side: "B", ws: 9, ls: 6 });
+  expect(box("HOME").textContent).toBe("–");
+  expect(box("AWAY").textContent).toBe("–");
 });
 
 test("a past game's score can be added later without touching the rotation", async () => {
@@ -87,8 +77,7 @@ test("a past game's score can be added later without touching the rotation", asy
   fireEvent.click(screen.getByRole("button", { name: "Skip score" }));
   const teams = JSON.stringify([read().teamA, read().teamB, read().queue]);
   fireEvent.click(screen.getByRole("button", { name: /Edit score for game/ }));
-  type(home(), "11"); type(away(), "8");
-  fireEvent.click(screen.getByRole("button", { name: "Save score" }));
+  tap(11); tap(8); save("Save score");
   const st = read();
   expect(st.gameLog[0]).toMatchObject({ ws: 11, ls: 8 });
   expect(st.lastResult.score).toBe("Home 11–8");
@@ -98,8 +87,7 @@ test("a past game's score can be added later without touching the rotation", asy
 test("undo removes the game and its score", async () => {
   await start();
   fireEvent.click(screen.getByText(/Home Wins/));
-  type(home(), "21"); type(away(), "19");
-  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  tap(11); tap(9); save();
   fireEvent.click(screen.getByText(/Undo/));
   expect(read().gameLog).toHaveLength(0);
   expect(screen.queryByText("Scores tonight")).toBeNull();

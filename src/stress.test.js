@@ -11,13 +11,13 @@ const App = require("./App").default;
 
 function mulberry(seed) { return () => { seed |= 0; seed = (seed + 0x6D2B79F5) | 0; let t = Math.imul(seed ^ (seed >>> 15), 1 | seed); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 const mk = (n, i) => ({ id: "p" + i, name: "Player" + (i + 1), joinOrder: i + 1, roundsWaited: 0, gamesPlayed: 0, wins: 0, winStreak: 0, hasPlayed: false, streakedOut: false, injurySubGame: false, isGuest: true });
-// Tap a win button, then either type a final score or skip it (score sheet).
+// Tap a win button, then either pick a final score on the 0-11 pad or skip it.
 function winAndScore(home, rnd) {
   fireEvent.click(screen.getByText(home ? /Home Wins/ : /Away Wins/));
   if (rnd() < 0.5) {
-    const hi = String(11 + Math.floor(rnd() * 11)), lo = String(Math.floor(rnd() * 11));
-    fireEvent.change(screen.getByLabelText("HOME score"), { target: { value: home ? hi : lo } });
-    fireEvent.change(screen.getByLabelText("AWAY score"), { target: { value: home ? lo : hi } });
+    const hi = String(9 + Math.floor(rnd() * 3)), lo = String(Math.floor(rnd() * 9));
+    fireEvent.click(screen.getByRole("button", { name: hi }));
+    fireEvent.click(screen.getByRole("button", { name: lo }));
     fireEvent.click(screen.getByRole("button", { name: "Save result" }));
   } else {
     fireEvent.click(screen.getByRole("button", { name: "Skip score" }));
