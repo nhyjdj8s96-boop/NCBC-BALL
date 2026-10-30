@@ -2166,6 +2166,10 @@ function AppInner() {
         const active = sp.active || (sp[winKey] === "" ? winKey : sp[loseKey] === "" ? loseKey : winKey);
         const colorOf = key => key === "a" ? "#FF9500" : awayColor;
         const tapNumber = n => setScorePrompt({ ...sp, [active]: String(n), active: active === winKey ? loseKey : active, err: "" });
+        // "Other score" swaps the pad for a keyboard box, for games played past 11.
+        const activeName = active === "a" ? "Home" : "Away";
+        // Next moves from the winner's box to the loser's; Done on the loser's box goes back to the pad view.
+        const doneCustom = () => setScorePrompt(active === winKey ? { ...sp, active: loseKey } : { ...sp, custom: false });
         const box = (key, label, won) => {
           const on = key === active, color = colorOf(key);
           return (
@@ -2189,7 +2193,22 @@ function AppInner() {
                 <span style={{ fontSize: 28, fontWeight: 600, color: COLOR.secondaryLabel, marginTop: 38 }} aria-hidden="true">–</span>
                 {box("b", "AWAY", !sp.winnerIsA)}
               </div>
-              <div role="group" aria-label={(active === "a" ? "Home" : "Away") + " points"} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 12, width: "100%", alignSelf: "stretch" }}>
+              {sp.custom ? (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, width: "100%", alignSelf: "stretch" }}>
+                  <input key={active} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} autoFocus
+                    aria-label={activeName + " points (other score)"} placeholder={activeName + " points"}
+                    value={sp[active]}
+                    onChange={e => setScorePrompt({ ...sp, [active]: e.target.value.replace(/[^0-9]/g, ""), err: "" })}
+                    onKeyDown={e => { if (e.key === "Enter") doneCustom(); }}
+                    style={{ flex: 1, minWidth: 0, height: 48, boxSizing: "border-box", border: "2px solid " + colorOf(active), borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 20, fontWeight: 700, textAlign: "center", outline: "none", fontFamily: "inherit" }} />
+                  <button type="button" onClick={doneCustom}
+                    style={{ height: 48, padding: "0 18px", border: "none", borderRadius: 12, background: colorOf(active), color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>{active === winKey ? "Next" : "Done"}</button>
+                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: false })}
+                    style={{ height: 48, padding: "0 12px", border: "none", borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 16, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>0–11</button>
+                </div>
+              ) : (
+                <>
+              <div role="group" aria-label={(active === "a" ? "Home" : "Away") + " points"} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 8, width: "100%", alignSelf: "stretch" }}>
                 {Array.from({ length: 12 }, (_, n) => {
                   const picked = sp[active] === String(n);
                   return (
@@ -2198,6 +2217,10 @@ function AppInner() {
                   );
                 })}
               </div>
+                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: true, active })}
+                    style={{ alignSelf: "center", height: 44, padding: "0 12px", marginBottom: 4, border: "none", background: "none", color: COLOR.tint, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Other score (over 11)</button>
+                </>
+              )}
               {sp.err && <p role="alert" style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600, color: "#FF3B30", textAlign: "center" }}>{sp.err}</p>}
               <button onClick={() => submitScore(false)}
                 style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: winColor, color: "#fff", fontSize: 17, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", marginTop: 4 }}>

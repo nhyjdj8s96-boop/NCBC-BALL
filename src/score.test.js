@@ -92,3 +92,15 @@ test("undo removes the game and its score", async () => {
   expect(read().gameLog).toHaveLength(0);
   expect(screen.queryByText("Scores tonight")).toBeNull();
 });
+
+test("Other score takes points above 11 from the keyboard", async () => {
+  await start();
+  fireEvent.click(screen.getByText(/Away Wins/));
+  fireEvent.click(screen.getByRole("button", { name: "Other score (over 11)" }));
+  fireEvent.change(screen.getByLabelText("Away points (other score)"), { target: { value: "15" } });
+  fireEvent.click(screen.getByRole("button", { name: "Next" }));
+  fireEvent.change(screen.getByLabelText("Home points (other score)"), { target: { value: "13" } });
+  save();
+  expect(read().gameLog[0]).toMatchObject({ side: "B", ws: 15, ls: 13 });
+  expect(read().lastResult.score).toBe("Away 15–13");
+});
