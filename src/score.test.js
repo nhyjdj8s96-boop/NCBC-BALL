@@ -66,14 +66,19 @@ test("skip records the game with no score; cancel records nothing", async () => 
   expect(screen.getByText("+ Add score")).toBeTruthy();
 });
 
-test("pre-fills the winner's box with the last winning score", async () => {
+test("boxes start empty every game; 9 and 11 fill the winner's box", async () => {
   await start();
   fireEvent.click(screen.getByText(/Home Wins/));
-  type(home(), "15"); type(away(), "9");
+  type(home(), "11"); type(away(), "7");
   fireEvent.click(screen.getByRole("button", { name: "Save result" }));
   fireEvent.click(screen.getByText(/Away Wins/));
-  expect(away().value).toBe("15");
   expect(home().value).toBe("");
+  expect(away().value).toBe("");
+  fireEvent.click(screen.getByRole("button", { name: "Won with 9" }));
+  expect(away().value).toBe("9");
+  type(home(), "6");
+  fireEvent.click(screen.getByRole("button", { name: "Save result" }));
+  expect(read().gameLog[1]).toMatchObject({ side: "B", ws: 9, ls: 6 });
 });
 
 test("a past game's score can be added later without touching the rotation", async () => {
