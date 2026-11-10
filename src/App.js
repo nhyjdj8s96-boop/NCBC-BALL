@@ -105,6 +105,14 @@ const TIMER_DURATION = 8 * 60;
 // Session and roster sync live via Firebase when available, falling back
 // to a same-shape localStorage layer automatically (see top of file).
 const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
+
+// Shown at the bottom of every screen so everyone can tell which version their
+// phone is running. Bump this (and package.json) with each update that goes live.
+const APP_VERSION = "1.5.0";
+const APP_VERSION_DATE = "Nov 10, 2026";
+function VersionTag() {
+  return <p style={{ margin: "20px 0 8px", textAlign: "center", fontSize: 12, color: COLOR.secondaryLabel, fontVariantNumeric: "tabular-nums" }}>NCBC Ball v{APP_VERSION} · {APP_VERSION_DATE}</p>;
+}
 // eslint-disable-next-line no-unused-vars
 const ZONES = { TEAM_A: "teamA", TEAM_B: "teamB", QUEUE: "queue", SITTING: "sitting", INJURED: "injured", LEFT: "left" };
 // eslint-disable-next-line no-unused-vars
@@ -1009,6 +1017,7 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
             </div>
           );
         })}
+        <VersionTag />
       </div>
     </div>
   );
@@ -2105,6 +2114,7 @@ function AppInner() {
           <button style={s.testBtn} onClick={loadTest24}>Load 24 test players</button>
           <button style={s.logoutBtn} onClick={() => setEndSessionConfirm(true)}>Clear saved session</button>
         </div>
+        <VersionTag />
         {isAdmin && customRoster.length > 0 && (
           <div style={s.card}>
             <p style={s.sectionLabel}>Added regulars ({customRoster.length})</p>
@@ -2572,6 +2582,7 @@ function AppInner() {
           <button style={s.sessionBtn} onClick={enterCatchUp}>⏱️ Fix teams (late arrival)</button>
         </div>
       )}
+      <VersionTag />
         </>
       )}
 
