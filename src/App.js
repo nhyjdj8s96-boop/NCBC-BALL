@@ -108,7 +108,7 @@ const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
 
 // Shown at the bottom of every screen so everyone can tell which version their
 // phone is running. Bump this (and package.json) with each update that goes live.
-const APP_VERSION = "1.5.0";
+const APP_VERSION = "1.5.1";
 const APP_VERSION_DATE = "Nov 10, 2026";
 function VersionTag() {
   return <p style={{ margin: "20px 0 8px", textAlign: "center", fontSize: 12, color: COLOR.secondaryLabel, fontVariantNumeric: "tabular-nums" }}>NCBC Ball v{APP_VERSION} · {APP_VERSION_DATE}</p>;
@@ -909,8 +909,9 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
 
 const fmtShortDate = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
 
-function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap }) {
+function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap, onDelete }) {
   const [search, setSearch] = useState("");
+  const [confirmDelete, setConfirmDelete] = useState(null); // date waiting for "Yes, delete"
   const q = search.trim().toLowerCase();
 
   const formatDate = iso => {
@@ -1014,6 +1015,22 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
                   )}
                 </div>
               )}
+              {!q && onDelete && (confirmDelete === entry.date ? (
+                <div role="alert" style={{ marginTop: 12, padding: 12, borderRadius: 12, background: COLOR.tertiarySystemBackground }}>
+                  <p style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 600, color: COLOR.label, textAlign: "center" }}>Delete {fmtShortDate(entry.date)}? Its attendance and scores are removed for everyone. This can't be undone.</p>
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <button type="button" onClick={() => setConfirmDelete(null)}
+                      style={{ flex: 1, height: 44, border: "none", borderRadius: 10, background: COLOR.secondarySystemBackground || COLOR.separator, color: COLOR.label, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Keep it</button>
+                    <button type="button" onClick={() => { setConfirmDelete(null); onDelete(entry.date); }}
+                      style={{ flex: 1, height: 44, border: "none", borderRadius: 10, background: "#FF3B30", color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Yes, delete</button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={() => setConfirmDelete(entry.date)} aria-label={"Delete " + fmtShortDate(entry.date)}
+                  style={{ display: "block", margin: "10px auto 0", height: 44, padding: "0 12px", border: "none", background: "none", color: "#FF3B30", fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                  Delete this night
+                </button>
+              ))}
             </div>
           );
         })}
@@ -1870,6 +1887,13 @@ function AppInner() {
       return updated;
     });
   };
+  const deleteHistoryNight = withAdmin(date => {
+    setAttendanceLog(prev => {
+      const updated = prev.filter(e => e.date !== date);
+      setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
+      return updated;
+    });
+  });
   const openPastRecap = date => {
     const entry = attendanceLog.find(e => e.date === date);
     if (entry) setSessionSummary(summaryFromEntry(entry));
@@ -2024,7 +2048,7 @@ function AppInner() {
   // ── ATTENDANCE HISTORY ────────────────────────────────────────────────────
   if (attendanceView) {
     return (<>
-      <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} onEditGame={editHistoryScore} onRecap={openPastRecap} />
+      <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} onEditGame={editHistoryScore} onRecap={openPastRecap} onDelete={deleteHistoryNight} />
       {scoreSheetEl}
       {recapEl}
     </>);
@@ -2701,7 +2725,7 @@ function AppInner() {
         </>
       )}
 
-      {gameTab === "log" && <AttendanceScreen attendanceLog={attendanceLog} embedded onBack={() => setGameTab("game")} onEditGame={editHistoryScore} onRecap={openPastRecap} />}
+      {gameTab === "log" && <AttendanceScreen attendanceLog={attendanceLog} embedded onBack={() => setGameTab("game")} onEditGame={editHistoryScore} onRecap={openPastRecap} onDelete={deleteHistoryNight} />}
 
       <nav style={s.tabBar} aria-label="Sections">
         <button style={{ ...s.tabItem, ...(gameTab === "game" ? s.tabItemActive : {}) }} onClick={() => { setGameTab("game"); window.scrollTo({ top: 0 }); }}>
