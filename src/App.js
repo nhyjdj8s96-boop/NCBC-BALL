@@ -380,6 +380,121 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
 }
 
 // Draws the end-of-night recap as a 1080x1080 square image (for sharing).
+// The night's awards, from the players (with gamesPlayed / wins) and the game log
+// ({ g, w: [ids], l: [ids], side, ws, ls }). Used when a session ends, and again
+// from Attendance History to remake a past night's recap photo.
+function buildNightSummary(everyone, gameLog, totalGames) {
+  const sorted = [...everyone].sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
+
+  // Helper: find every player tied for the max of a given metric, not just
+  // the first one — ties should all be listed, not arbitrarily picked.
+  const leaders = (list, metricFn) => {
+    if (list.length === 0) return [];
+    const max = Math.max(...list.map(metricFn));
+    if (max <= 0) return [];
+    return list.filter(p => metricFn(p) === max);
+  };
+
+  const mostGames = leaders(everyone, p => p.gamesPlayed || 0);
+  const mostWins = leaders(everyone, p => p.wins || 0);
+  const mostLosses = leaders(everyone, p => (p.gamesPlayed || 0) - (p.wins || 0));
+
+  // Win%/loss% leaders only count players with at least 2 games, so one
+  // lucky or unlucky game doesn't dominate the award.
+  const eligible = everyone.filter(p => (p.gamesPlayed || 0) >= 2);
+  const bestWinPct = leaders(eligible, p => (p.wins || 0) / p.gamesPlayed);
+  const worstWinPct = eligible.length > 0
+    ? (() => {
+        const min = Math.min(...eligible.map(p => (p.wins || 0) / p.gamesPlayed));
+        return eligible.filter(p => (p.wins || 0) / p.gamesPlayed === min);
+      })()
+    : [];
+
+  // Guests — anyone explicitly marked as a guest at sign-up (chip taps are
+  // always members; typed-in names are asked directly)
+  const guests = everyone.filter(p => p.isGuest);
+
+  // Best unit: the group of 2-5 players with the most wins together (needs 2+ games and 2+ wins together).
+  const byId = new Map(everyone.map(p => [p.id, p]));
+  const groups = new Map();
+  const subsets = (arr) => {
+    const out = [];
+    const n = arr.length;
+    for (let m = 1; m < (1 << n); m++) {
+      const sub = [];
+      for (let i = 0; i < n; i++) if (m & (1 << i)) sub.push(arr[i]);
+      if (sub.length >= 2) out.push(sub);
+    }
+    return out;
+  };
+  gameLog.forEach(gm => [[gm.w, 1], [gm.l, 0]].forEach(([team, won]) => {
+    if (team.length < 2 || team.length > 8) return;
+    subsets([...team].sort()).forEach(sub => {
+      const k = sub.join("|");
+      const e = groups.get(k) || { ids: sub, g: 0, w: 0 }; e.g++; e.w += won; groups.set(k, e);
+    });
+  }));
+  const units = [...groups.values()].filter(e => e.g >= 2 && e.w >= 2 && e.ids.every(id => byId.has(id)))
+    .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || y.ids.length - x.ids.length || x.g - y.g);
+  // Prefer a bigger group when it is nearly as good as the best one (within 5 points of win % and at most 1 win fewer).
+  let topUnit = units[0];
+  if (topUnit) {
+    const near = units.filter(e => e.ids.length > topUnit.ids.length && e.w >= topUnit.w - 1 && e.w / e.g >= topUnit.w / topUnit.g - 0.05)
+      .sort((x, y) => y.ids.length - x.ids.length || y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
+    if (near[0]) topUnit = near[0];
+  }
+  const sameAsTop = topUnit ? units.filter(e => e !== topUnit && e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length) : [];
+  // How much a unit beat teams by: average winning margin over their wins that had a score,
+  // plus their total point differential over every scored game they played together.
+  const scored = gameLog.filter(gm => gm.ws != null && gm.ls != null);
+  const unitMargins = ids => {
+    let diff = 0, n = 0, winPts = 0, wins = 0;
+    scored.forEach(gm => {
+      const m = gm.ws - gm.ls;
+      if (ids.every(id => gm.w.includes(id))) { diff += m; n++; winPts += m; wins++; }
+      else if (ids.every(id => gm.l.includes(id))) { diff -= m; n++; }
+    });
+    return n ? { diff, scoredGames: n, avgWin: wins ? winPts / wins : null } : null;
+  };
+  const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), alts: sameAsTop.map(e => e.ids.map(id => byId.get(id))), w: topUnit.w, g: topUnit.g, margins: unitMargins(topUnit.ids) } : null;
+
+  // Game awards (scored games only). Ties: the bigger winning score, then the later game.
+  const gameAward = (pick, better) => {
+    if (!scored.length) return null;
+    const best = scored.reduce((a, b) => { const x = pick(a), y = pick(b); return better(y, x) || (y === x && (b.ws > a.ws || (b.ws === a.ws && b.g > a.g))) ? b : a; });
+    return { g: best.g, ws: best.ws, ls: best.ls, side: best.side, players: best.w.map(id => byId.get(id)).filter(Boolean), losers: best.l.map(id => byId.get(id)).filter(Boolean) };
+  };
+  const blowout = gameAward(gm => gm.ws - gm.ls, (y, x) => y > x);
+  const lowGame = gameAward(gm => gm.ws + gm.ls, (y, x) => y < x);
+
+  return {
+    totalGames,
+    bestDuo,
+    blowout,
+    lowGame,
+    players: sorted,
+    mostGames,
+    mostWins,
+    mostLosses,
+    bestWinPct,
+    worstWinPct,
+    guests,
+    playerCount: everyone.length,
+  };
+}
+
+// Rebuild a past night from its Attendance History entry. Ids are names there.
+function summaryFromEntry(entry) {
+  const attendees = entry.attendees || (entry.names || []).map(name => ({ name, isGuest: false }));
+  const games = (entry.games || []).map(gm => ({ ...gm, w: gm.w || [], l: gm.l || [] }));
+  const stats = new Map(attendees.map(a => [a.name, { id: a.name, name: a.name, isGuest: !!a.isGuest, gamesPlayed: 0, wins: 0 }]));
+  const get = n => { if (!stats.has(n)) stats.set(n, { id: n, name: n, isGuest: false, gamesPlayed: 0, wins: 0 }); return stats.get(n); };
+  games.forEach(gm => { gm.w.forEach(n => { const p = get(n); p.gamesPlayed++; p.wins++; }); gm.l.forEach(n => { get(n).gamesPlayed++; }); });
+  const [y, m, d] = entry.date.split("-").map(Number);
+  return { ...buildNightSummary([...stats.values()], games, games.length), fromHistory: true, date: entry.date,
+    dateStr: new Date(y, m - 1, d).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) };
+}
+
 function renderWrapCanvas(sm, dateStr, logo) {
   const W = 1080;
   const c = document.createElement("canvas"); c.width = W; c.height = W;
@@ -784,7 +899,9 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
   );
 }
 
-function AttendanceScreen({ attendanceLog, onBack, embedded }) {
+const fmtShortDate = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+
+function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap }) {
   const [search, setSearch] = useState("");
   const q = search.trim().toLowerCase();
 
@@ -861,16 +978,32 @@ function AttendanceScreen({ attendanceLog, onBack, embedded }) {
                   <p style={s.attendanceNameList}>{guests.map(a => a.name).join(", ")}</p>
                 </div>
               )}
-              {!q && entry.games.some(gm => gm.ws != null) && (
+              {!q && entry.games.length > 0 && (
                 <div style={{ marginTop: 10 }}>
-                  <p style={s.attendanceGroupLabel}>🏀 Scores</p>
-                  {entry.games.filter(gm => gm.ws != null).map(gm => (
-                    <p key={gm.g} style={{ ...s.attendanceNameList, display: "flex", gap: 8 }}>
-                      <span style={{ width: 28, flexShrink: 0, color: COLOR.secondaryLabel }}>G{gm.g}</span>
-                      <span style={{ flex: 1, minWidth: 0 }}>{gm.side === "A" ? "Home" : gm.side === "B" ? "Away" : "Winners"}: {gm.w.join(", ")}</span>
-                      <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{gm.ws}–{gm.ls}</span>
-                    </p>
-                  ))}
+                  <p style={s.attendanceGroupLabel}>🏀 Scores{onEditGame ? " · tap a game to fix it" : ""}</p>
+                  {entry.games.map((gm, idx) => {
+                    const Row = onEditGame ? "button" : "div";
+                    return (
+                      <Row key={idx} type={onEditGame ? "button" : undefined} onClick={onEditGame ? () => onEditGame(entry.date, idx) : undefined}
+                        aria-label={onEditGame ? "Fix game " + gm.g + " on " + fmtShortDate(entry.date) : undefined}
+                        style={{ ...s.attendanceNameList, display: "flex", gap: 8, width: "100%", minHeight: 44, padding: "4px 0", border: "none", background: "none", textAlign: "left", fontFamily: "inherit", cursor: onEditGame ? "pointer" : "default", color: COLOR.label, alignItems: "flex-start" }}>
+                        <span style={{ width: 28, flexShrink: 0, color: COLOR.secondaryLabel }}>G{gm.g}</span>
+                        <span style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ display: "block" }}>{gm.side === "A" ? "Home" : gm.side === "B" ? "Away" : "Winners"}: {(gm.w || []).join(", ")}</span>
+                          {(gm.l || []).length > 0 && <span style={{ display: "block", fontSize: "0.88em", color: COLOR.secondaryLabel }}>beat {gm.side === "A" ? "Away" : gm.side === "B" ? "Home" : ""}{gm.side ? ": " : ""}{gm.l.join(", ")}</span>}
+                        </span>
+                        {gm.ws != null
+                          ? <span style={{ fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{gm.ws}–{gm.ls}</span>
+                          : <span style={{ flexShrink: 0, color: onEditGame ? COLOR.tint : COLOR.secondaryLabel, fontWeight: 600 }}>{onEditGame ? "+ Score" : "—"}</span>}
+                      </Row>
+                    );
+                  })}
+                  {onRecap && (
+                    <button type="button" onClick={() => onRecap(entry.date)}
+                      style={{ width: "100%", height: 48, marginTop: 10, border: "none", borderRadius: 12, background: "#FFC24D", color: "#0E1B38", fontSize: 16, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" }}>
+                      Make recap photo
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -1378,104 +1511,8 @@ function AppInner() {
   // Step 1: compute the night's story and show it (no wipe yet)
   const endSession = () => {
     const everyone = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
-    const sorted = [...everyone].sort((a, b) => (b.gamesPlayed || 0) - (a.gamesPlayed || 0));
-    const totalGames = gameCount - 1;
-
-    // Helper: find every player tied for the max of a given metric, not just
-    // the first one — ties should all be listed, not arbitrarily picked.
-    const leaders = (list, metricFn) => {
-      if (list.length === 0) return [];
-      const max = Math.max(...list.map(metricFn));
-      if (max <= 0) return [];
-      return list.filter(p => metricFn(p) === max);
-    };
-
-    const mostGames = leaders(everyone, p => p.gamesPlayed || 0);
-    const mostWins = leaders(everyone, p => p.wins || 0);
-    const mostLosses = leaders(everyone, p => (p.gamesPlayed || 0) - (p.wins || 0));
-
-    // Win%/loss% leaders only count players with at least 2 games, so one
-    // lucky or unlucky game doesn't dominate the award.
-    const eligible = everyone.filter(p => (p.gamesPlayed || 0) >= 2);
-    const bestWinPct = leaders(eligible, p => (p.wins || 0) / p.gamesPlayed);
-    const worstWinPct = eligible.length > 0
-      ? (() => {
-          const min = Math.min(...eligible.map(p => (p.wins || 0) / p.gamesPlayed));
-          return eligible.filter(p => (p.wins || 0) / p.gamesPlayed === min);
-        })()
-      : [];
-
-    // Guests — anyone explicitly marked as a guest at sign-up (chip taps are
-    // always members; typed-in names are asked directly)
-    const guests = everyone.filter(p => p.isGuest);
-
-    // Best unit: the group of 2-5 players with the most wins together (needs 2+ games and 2+ wins together).
+    setSessionSummary(buildNightSummary(everyone, gameLog, gameCount - 1));
     const byId = new Map(everyone.map(p => [p.id, p]));
-    const groups = new Map();
-    const subsets = (arr) => {
-      const out = [];
-      const n = arr.length;
-      for (let m = 1; m < (1 << n); m++) {
-        const sub = [];
-        for (let i = 0; i < n; i++) if (m & (1 << i)) sub.push(arr[i]);
-        if (sub.length >= 2) out.push(sub);
-      }
-      return out;
-    };
-    gameLog.forEach(gm => [[gm.w, 1], [gm.l, 0]].forEach(([team, won]) => {
-      if (team.length < 2 || team.length > 8) return;
-      subsets([...team].sort()).forEach(sub => {
-        const k = sub.join("|");
-        const e = groups.get(k) || { ids: sub, g: 0, w: 0 }; e.g++; e.w += won; groups.set(k, e);
-      });
-    }));
-    const units = [...groups.values()].filter(e => e.g >= 2 && e.w >= 2 && e.ids.every(id => byId.has(id)))
-      .sort((x, y) => y.w - x.w || (y.w / y.g) - (x.w / x.g) || y.ids.length - x.ids.length || x.g - y.g);
-    // Prefer a bigger group when it is nearly as good as the best one (within 5 points of win % and at most 1 win fewer).
-    let topUnit = units[0];
-    if (topUnit) {
-      const near = units.filter(e => e.ids.length > topUnit.ids.length && e.w >= topUnit.w - 1 && e.w / e.g >= topUnit.w / topUnit.g - 0.05)
-        .sort((x, y) => y.ids.length - x.ids.length || y.w - x.w || (y.w / y.g) - (x.w / x.g) || x.g - y.g);
-      if (near[0]) topUnit = near[0];
-    }
-    const sameAsTop = topUnit ? units.filter(e => e !== topUnit && e.w === topUnit.w && e.g === topUnit.g && e.ids.length === topUnit.ids.length) : [];
-    // How much a unit beat teams by: average winning margin over their wins that had a score,
-    // plus their total point differential over every scored game they played together.
-    const scored = gameLog.filter(gm => gm.ws != null && gm.ls != null);
-    const unitMargins = ids => {
-      let diff = 0, n = 0, winPts = 0, wins = 0;
-      scored.forEach(gm => {
-        const m = gm.ws - gm.ls;
-        if (ids.every(id => gm.w.includes(id))) { diff += m; n++; winPts += m; wins++; }
-        else if (ids.every(id => gm.l.includes(id))) { diff -= m; n++; }
-      });
-      return n ? { diff, scoredGames: n, avgWin: wins ? winPts / wins : null } : null;
-    };
-    const bestDuo = topUnit ? { players: topUnit.ids.map(id => byId.get(id)), alts: sameAsTop.map(e => e.ids.map(id => byId.get(id))), w: topUnit.w, g: topUnit.g, margins: unitMargins(topUnit.ids) } : null;
-
-    // Game awards (scored games only). Ties: the bigger winning score, then the later game.
-    const gameAward = (pick, better) => {
-      if (!scored.length) return null;
-      const best = scored.reduce((a, b) => { const x = pick(a), y = pick(b); return better(y, x) || (y === x && (b.ws > a.ws || (b.ws === a.ws && b.g > a.g))) ? b : a; });
-      return { g: best.g, ws: best.ws, ls: best.ls, side: best.side, players: best.w.map(id => byId.get(id)).filter(Boolean), losers: best.l.map(id => byId.get(id)).filter(Boolean) };
-    };
-    const blowout = gameAward(gm => gm.ws - gm.ls, (y, x) => y > x);
-    const lowGame = gameAward(gm => gm.ws + gm.ls, (y, x) => y < x);
-
-    setSessionSummary({
-      totalGames,
-      bestDuo,
-      blowout,
-      lowGame,
-      players: sorted,
-      mostGames,
-      mostWins,
-      mostLosses,
-      bestWinPct,
-      worstWinPct,
-      guests,
-      playerCount: everyone.length,
-    });
     // Record tonight's attendance permanently — one entry per session,
     // keyed by date, never wiped by the summary dismissal or session clear.
     // Each attendee keeps their guest/member status so the history view can
@@ -1508,7 +1545,7 @@ function AppInner() {
   useEffect(() => {
     if (!sessionSummary) { setWrapImg(null); return undefined; }
     let alive = true, objUrl = null;
-    const dateStr = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
+    const dateStr = sessionSummary.dateStr || new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
     const draw = logo => {
       if (!alive) return;
       try {
@@ -1799,6 +1836,36 @@ function AppInner() {
     const ws = gm.ws != null ? String(gm.ws) : "", ls = gm.ls != null ? String(gm.ls) : "";
     setScorePrompt({ editIdx: idx, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
   });
+  // ── PAST NIGHTS (Attendance History) ──────────────────────────────────────
+  const editHistoryScore = withAdmin((date, idx) => {
+    const entry = attendanceLog.find(e => e.date === date);
+    const gm = entry && entry.games && entry.games[idx];
+    if (!gm) return;
+    const winnerIsA = gm.side !== "B";
+    const ws = gm.ws != null ? String(gm.ws) : "", ls = gm.ls != null ? String(gm.ls) : "";
+    setScorePrompt({ histDate: date, histIdx: idx, g: gm.g, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
+  });
+  const saveHistoryGame = (sp, score) => {
+    setAttendanceLog(prev => {
+      const updated = prev.map(e => {
+        if (e.date !== sp.histDate || !e.games) return e;
+        return { ...e, games: e.games.map((gm, i) => {
+          if (i !== sp.histIdx) return gm;
+          const { ws, ls, ...rest } = gm;
+          // "Switch winner" swaps the two teams for this game.
+          const fixed = sp.flipped ? { ...rest, w: gm.l || [], l: gm.w || [], side: sp.winnerIsA ? "A" : "B" } : rest;
+          return score ? { ...fixed, ws: score.ws, ls: score.ls } : fixed;
+        }) };
+      });
+      setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
+      return updated;
+    });
+  };
+  const openPastRecap = date => {
+    const entry = attendanceLog.find(e => e.date === date);
+    if (entry) setSessionSummary(summaryFromEntry(entry));
+  };
+
   const submitScore = skip => {
     const sp = scorePrompt;
     if (!sp) return;
@@ -1815,6 +1882,7 @@ function AppInner() {
       }
     }
     setScorePrompt(null);
+    if (sp.histDate != null) { saveHistoryGame(sp, score); return; }
     if (sp.editIdx != null) {
       // Fixing a past game only touches its score — the rotation already happened.
       setGameLog(prev => prev.map((gm, i) => {
@@ -1834,6 +1902,106 @@ function AppInner() {
   const loadTest = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return { ...initPlayer(n, jc), isGuest: true }; })); setJoinCounter(jc); });
   const loadTest24 = withAdmin(() => { const names = ["Marcus","DeShawn","Jamal","Tyler","Kobe","Andre","Chris","Jordan","Mike","Damian","Zach","Kevin","Isaiah","Darius","Trey","Brandon","Malik","Devon","Quincy","Jalen","Aaron","Elijah","Cody","Rashad"]; let jc = joinCounter; setSetupPlayers(names.map(n => { jc++; return { ...initPlayer(n, jc), isGuest: true }; })); setJoinCounter(jc); });
 
+  const scoreSheetEl = scorePrompt && (() => {
+        const sp = scorePrompt, past = sp.histDate != null, editing = sp.editIdx != null || past;
+        const awayColor = COLOR === COLOR_DARK ? "#64B5F6" : "#007AFF";
+        const winColor = sp.winnerIsA ? "#FF9500" : "#007AFF";
+        const winName = sp.winnerIsA ? "Home" : "Away";
+        // No keyboard: a 0-11 pad fills whichever box is selected. It starts on
+        // the winner's box and moves to the loser's box after the first tap.
+        const winKey = sp.winnerIsA ? "a" : "b", loseKey = sp.winnerIsA ? "b" : "a";
+        const active = sp.active || (sp[winKey] === "" ? winKey : sp[loseKey] === "" ? loseKey : winKey);
+        const colorOf = key => key === "a" ? "#FF9500" : awayColor;
+        const tapNumber = n => setScorePrompt({ ...sp, [active]: String(n), active: active === winKey ? loseKey : active, err: "" });
+        // "Other score" swaps the pad for a keyboard box, for games played past 11.
+        const activeName = active === "a" ? "Home" : "Away";
+        // Next moves from the winner's box to the loser's; Done on the loser's box goes back to the pad view.
+        const doneCustom = () => setScorePrompt(active === winKey ? { ...sp, active: loseKey } : { ...sp, custom: false });
+        const box = (key, label, won) => {
+          const on = key === active, color = colorOf(key);
+          return (
+            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color }}>{label}{won ? " · WON" : ""}</span>
+              <button type="button" onClick={() => setScorePrompt({ ...sp, active: key })} aria-label={label + " score"} aria-pressed={on}
+                style={{ width: "100%", height: 72, boxSizing: "border-box", textAlign: "center", fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: (on ? "3px solid " : "2px solid ") + (on ? color : COLOR.separator), borderRadius: 14, background: COLOR.tertiarySystemBackground, color: sp[key] === "" ? COLOR.tertiaryLabel : COLOR.label, fontFamily: "inherit", cursor: "pointer", padding: 0 }}>
+                {sp[key] === "" ? "–" : sp[key]}
+              </button>
+            </div>
+          );
+        };
+        return (
+          <div style={s.overlay} onClick={() => setScorePrompt(null)}>
+            <div style={s.modal} onClick={e => e.stopPropagation()}>
+              <div style={s.modalGrabber} />
+              <p style={s.modalTitle}>{past ? fmtShortDate(sp.histDate) + " · Game " + sp.g + " score" : editing ? "Game " + (gameLog[sp.editIdx] ? gameLog[sp.editIdx].g : "") + " score" : winName + " wins — final score?"}</p>
+              <p style={s.modalDesc}>{past ? "Fixes the saved score. Remake the recap photo after." : editing ? "Only the score changes. Teams and rotation stay as they are." : "Tap " + winName + "'s points, then " + (sp.winnerIsA ? "Away" : "Home") + "'s. Optional."}</p>
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, margin: "4px 0 12px", width: "100%", alignSelf: "stretch" }}>
+                {box("a", "HOME", sp.winnerIsA)}
+                <span style={{ fontSize: 28, fontWeight: 600, color: COLOR.secondaryLabel, marginTop: 38 }} aria-hidden="true">–</span>
+                {box("b", "AWAY", !sp.winnerIsA)}
+              </div>
+              {sp.custom ? (
+                <div style={{ display: "flex", gap: 8, marginBottom: 12, width: "100%", alignSelf: "stretch" }}>
+                  <input key={active} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} autoFocus
+                    aria-label={activeName + " points (other score)"} placeholder={activeName + " points"}
+                    value={sp[active]}
+                    onChange={e => setScorePrompt({ ...sp, [active]: e.target.value.replace(/[^0-9]/g, ""), err: "" })}
+                    onKeyDown={e => { if (e.key === "Enter") doneCustom(); }}
+                    style={{ flex: 1, minWidth: 0, height: 48, boxSizing: "border-box", border: "2px solid " + colorOf(active), borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 20, fontWeight: 700, textAlign: "center", outline: "none", fontFamily: "inherit" }} />
+                  <button type="button" onClick={doneCustom}
+                    style={{ height: 48, padding: "0 18px", border: "none", borderRadius: 12, background: colorOf(active), color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>{active === winKey ? "Next" : "Done"}</button>
+                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: false })}
+                    style={{ height: 48, padding: "0 12px", border: "none", borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 16, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>0–11</button>
+                </div>
+              ) : (
+                <>
+              <div role="group" aria-label={(active === "a" ? "Home" : "Away") + " points"} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 8, width: "100%", alignSelf: "stretch" }}>
+                {Array.from({ length: 12 }, (_, n) => {
+                  const picked = sp[active] === String(n);
+                  return (
+                    <button key={n} type="button" onClick={() => tapNumber(n)} aria-pressed={picked}
+                      style={{ height: 48, border: "none", borderRadius: 12, background: picked ? colorOf(active) : COLOR.tertiarySystemBackground, color: picked ? "#fff" : COLOR.label, fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFamily: "inherit", cursor: "pointer" }}>{n}</button>
+                  );
+                })}
+              </div>
+                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: true, active })}
+                    style={{ alignSelf: "center", height: 44, padding: "0 12px", marginBottom: 4, border: "none", background: "none", color: COLOR.tint, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Other score (over 11)</button>
+                </>
+              )}
+              {past && (
+                <button type="button" onClick={() => setScorePrompt({ ...sp, winnerIsA: !sp.winnerIsA, flipped: !sp.flipped, active: undefined, err: "" })}
+                  style={{ alignSelf: "center", height: 40, padding: "0 12px", marginBottom: 4, border: "none", background: "none", color: COLOR.secondaryLabel, fontSize: 14, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
+                  Wrong winner? Switch to {sp.winnerIsA ? "Away" : "Home"} won
+                </button>
+              )}
+              {sp.err && <p role="alert" style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600, color: "#FF3B30", textAlign: "center" }}>{sp.err}</p>}
+              <button onClick={() => submitScore(false)}
+                style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: winColor, color: "#fff", fontSize: 17, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", marginTop: 4 }}>
+                {editing ? "Save score" : "Save result"}
+              </button>
+              <button style={s.btnCancel} onClick={() => submitScore(true)}>{editing ? "Remove score" : "Skip score"}</button>
+              <button style={s.btnCancel} onClick={() => setScorePrompt(null)}>Cancel</button>
+            </div>
+          </div>
+        );
+      })();
+  const recapEl = sessionSummary && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "#0A1226", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
+          <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 16, overflow: "hidden", background: "#142549" }}>
+              {wrapImg ? <img src={wrapImg.url} alt="Monday Night Ball recap" style={{ width: "100%", height: "100%", display: "block" }} /> : <div style={{ color: "rgba(255,255,255,0.7)", textAlign: "center", paddingTop: "45%" }}>Making your recap…</div>}
+            </div>
+            <button style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: "#FFC24D", color: "#0E1B38", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", opacity: wrapImg ? 1 : 0.5 }} disabled={!wrapImg} onClick={shareRecap}>Share image</button>
+            {sessionSummary.fromHistory ? (
+              <button style={{ width: "100%", height: 48, border: "1px solid rgba(255,255,255,0.3)", borderRadius: 14, background: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} onClick={() => setSessionSummary(null)}>Close</button>
+            ) : (<>
+            <button style={{ width: "100%", height: 48, border: "1px solid rgba(255,255,255,0.3)", borderRadius: 14, background: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} onClick={finishEndSession}>Done — clear session</button>
+            <button style={{ width: "100%", height: 40, border: "none", background: "none", color: "rgba(255,255,255,0.75)", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
+            </>)}
+          </div>
+        </div>
+      );
+
   // ── LOADING ───────────────────────────────────────────────────────────────
   if (!firestoreReady || !rosterReady) {
     return (
@@ -1846,7 +2014,11 @@ function AppInner() {
 
   // ── ATTENDANCE HISTORY ────────────────────────────────────────────────────
   if (attendanceView) {
-    return <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} />;
+    return (<>
+      <AttendanceScreen attendanceLog={attendanceLog} onBack={() => setAttendanceView(false)} onEditGame={editHistoryScore} onRecap={openPastRecap} />
+      {scoreSheetEl}
+      {recapEl}
+    </>);
   }
 
   // ── CATCH UP (admin joining a game already in progress) ──────────────────
@@ -2038,6 +2210,7 @@ function AppInner() {
     scored: gm.ws != null && gm.ls != null,
     ws: gm.ws, ls: gm.ls,
     winners: (gm.w || []).map(id => nameById.get(id)).filter(Boolean).join(", "),
+    losers: (gm.l || []).map(id => nameById.get(id)).filter(Boolean).join(", "),
   })).reverse();
   const scoreRowsShown = showAllScores ? scoreRows : scoreRows.slice(0, 3);
   const pam = playerActionModal;
@@ -2218,83 +2391,7 @@ function AppInner() {
         </div>
       )}
 
-      {scorePrompt && (() => {
-        const sp = scorePrompt, editing = sp.editIdx != null;
-        const awayColor = COLOR === COLOR_DARK ? "#64B5F6" : "#007AFF";
-        const winColor = sp.winnerIsA ? "#FF9500" : "#007AFF";
-        const winName = sp.winnerIsA ? "Home" : "Away";
-        // No keyboard: a 0-11 pad fills whichever box is selected. It starts on
-        // the winner's box and moves to the loser's box after the first tap.
-        const winKey = sp.winnerIsA ? "a" : "b", loseKey = sp.winnerIsA ? "b" : "a";
-        const active = sp.active || (sp[winKey] === "" ? winKey : sp[loseKey] === "" ? loseKey : winKey);
-        const colorOf = key => key === "a" ? "#FF9500" : awayColor;
-        const tapNumber = n => setScorePrompt({ ...sp, [active]: String(n), active: active === winKey ? loseKey : active, err: "" });
-        // "Other score" swaps the pad for a keyboard box, for games played past 11.
-        const activeName = active === "a" ? "Home" : "Away";
-        // Next moves from the winner's box to the loser's; Done on the loser's box goes back to the pad view.
-        const doneCustom = () => setScorePrompt(active === winKey ? { ...sp, active: loseKey } : { ...sp, custom: false });
-        const box = (key, label, won) => {
-          const on = key === active, color = colorOf(key);
-          return (
-            <div style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
-              <span style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.06em", color }}>{label}{won ? " · WON" : ""}</span>
-              <button type="button" onClick={() => setScorePrompt({ ...sp, active: key })} aria-label={label + " score"} aria-pressed={on}
-                style={{ width: "100%", height: 72, boxSizing: "border-box", textAlign: "center", fontSize: 40, fontWeight: 700, fontVariantNumeric: "tabular-nums", border: (on ? "3px solid " : "2px solid ") + (on ? color : COLOR.separator), borderRadius: 14, background: COLOR.tertiarySystemBackground, color: sp[key] === "" ? COLOR.tertiaryLabel : COLOR.label, fontFamily: "inherit", cursor: "pointer", padding: 0 }}>
-                {sp[key] === "" ? "–" : sp[key]}
-              </button>
-            </div>
-          );
-        };
-        return (
-          <div style={s.overlay} onClick={() => setScorePrompt(null)}>
-            <div style={s.modal} onClick={e => e.stopPropagation()}>
-              <div style={s.modalGrabber} />
-              <p style={s.modalTitle}>{editing ? "Game " + (gameLog[sp.editIdx] ? gameLog[sp.editIdx].g : "") + " score" : winName + " wins — final score?"}</p>
-              <p style={s.modalDesc}>{editing ? "Only the score changes. Teams and rotation stay as they are." : "Tap " + winName + "'s points, then " + (sp.winnerIsA ? "Away" : "Home") + "'s. Optional."}</p>
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12, margin: "4px 0 12px", width: "100%", alignSelf: "stretch" }}>
-                {box("a", "HOME", sp.winnerIsA)}
-                <span style={{ fontSize: 28, fontWeight: 600, color: COLOR.secondaryLabel, marginTop: 38 }} aria-hidden="true">–</span>
-                {box("b", "AWAY", !sp.winnerIsA)}
-              </div>
-              {sp.custom ? (
-                <div style={{ display: "flex", gap: 8, marginBottom: 12, width: "100%", alignSelf: "stretch" }}>
-                  <input key={active} type="text" inputMode="numeric" pattern="[0-9]*" maxLength={3} autoFocus
-                    aria-label={activeName + " points (other score)"} placeholder={activeName + " points"}
-                    value={sp[active]}
-                    onChange={e => setScorePrompt({ ...sp, [active]: e.target.value.replace(/[^0-9]/g, ""), err: "" })}
-                    onKeyDown={e => { if (e.key === "Enter") doneCustom(); }}
-                    style={{ flex: 1, minWidth: 0, height: 48, boxSizing: "border-box", border: "2px solid " + colorOf(active), borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 20, fontWeight: 700, textAlign: "center", outline: "none", fontFamily: "inherit" }} />
-                  <button type="button" onClick={doneCustom}
-                    style={{ height: 48, padding: "0 18px", border: "none", borderRadius: 12, background: colorOf(active), color: "#fff", fontSize: 16, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>{active === winKey ? "Next" : "Done"}</button>
-                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: false })}
-                    style={{ height: 48, padding: "0 12px", border: "none", borderRadius: 12, background: COLOR.tertiarySystemBackground, color: COLOR.label, fontSize: 16, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>0–11</button>
-                </div>
-              ) : (
-                <>
-              <div role="group" aria-label={(active === "a" ? "Home" : "Away") + " points"} style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 8, marginBottom: 8, width: "100%", alignSelf: "stretch" }}>
-                {Array.from({ length: 12 }, (_, n) => {
-                  const picked = sp[active] === String(n);
-                  return (
-                    <button key={n} type="button" onClick={() => tapNumber(n)} aria-pressed={picked}
-                      style={{ height: 48, border: "none", borderRadius: 12, background: picked ? colorOf(active) : COLOR.tertiarySystemBackground, color: picked ? "#fff" : COLOR.label, fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", fontFamily: "inherit", cursor: "pointer" }}>{n}</button>
-                  );
-                })}
-              </div>
-                  <button type="button" onClick={() => setScorePrompt({ ...sp, custom: true, active })}
-                    style={{ alignSelf: "center", height: 44, padding: "0 12px", marginBottom: 4, border: "none", background: "none", color: COLOR.tint, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Other score (over 11)</button>
-                </>
-              )}
-              {sp.err && <p role="alert" style={{ margin: "0 0 8px", fontSize: 14, fontWeight: 600, color: "#FF3B30", textAlign: "center" }}>{sp.err}</p>}
-              <button onClick={() => submitScore(false)}
-                style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: winColor, color: "#fff", fontSize: 17, fontWeight: 700, fontFamily: "inherit", cursor: "pointer", marginTop: 4 }}>
-                {editing ? "Save score" : "Save result"}
-              </button>
-              <button style={s.btnCancel} onClick={() => submitScore(true)}>{editing ? "Remove score" : "Skip score"}</button>
-              <button style={s.btnCancel} onClick={() => setScorePrompt(null)}>Cancel</button>
-            </div>
-          </div>
-        );
-      })()}
+      {scoreSheetEl}
 
       {endSessionConfirm && (
         <div style={s.overlay} onClick={() => setEndSessionConfirm(false)}>
@@ -2308,18 +2405,7 @@ function AppInner() {
         </div>
       )}
 
-      {sessionSummary && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 50, background: "#0A1226", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "calc(12px + env(safe-area-inset-top)) 16px calc(12px + env(safe-area-inset-bottom))", boxSizing: "border-box" }}>
-          <div style={{ width: "100%", maxWidth: 420, display: "flex", flexDirection: "column", gap: 12 }}>
-            <div style={{ width: "100%", aspectRatio: "1 / 1", borderRadius: 16, overflow: "hidden", background: "#142549" }}>
-              {wrapImg ? <img src={wrapImg.url} alt="Monday Night Ball recap" style={{ width: "100%", height: "100%", display: "block" }} /> : <div style={{ color: "rgba(255,255,255,0.7)", textAlign: "center", paddingTop: "45%" }}>Making your recap…</div>}
-            </div>
-            <button style={{ width: "100%", height: 52, border: "none", borderRadius: 14, background: "#FFC24D", color: "#0E1B38", fontSize: 17, fontWeight: 800, cursor: "pointer", fontFamily: "inherit", opacity: wrapImg ? 1 : 0.5 }} disabled={!wrapImg} onClick={shareRecap}>Share image</button>
-            <button style={{ width: "100%", height: 48, border: "1px solid rgba(255,255,255,0.3)", borderRadius: 14, background: "none", color: "#fff", fontSize: 16, fontWeight: 700, cursor: "pointer", fontFamily: "inherit" }} onClick={finishEndSession}>Done — clear session</button>
-            <button style={{ width: "100%", height: 40, border: "none", background: "none", color: "rgba(255,255,255,0.75)", fontSize: 15, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }} onClick={() => setSessionSummary(null)}>Go back — keep playing</button>
-          </div>
-        </div>
-      )}
+      {recapEl}
 
       {dupeWarning && (
         <div style={s.overlay} onClick={() => setDupeWarning(null)}>
@@ -2463,7 +2549,8 @@ function AppInner() {
                   <span style={{ display: "block", fontSize: 15, fontWeight: 600 }}>
                     {r.team ? <span style={{ color: teamColor }}>{r.team} won</span> : "Won"}
                   </span>
-                  {r.winners && <span style={{ display: "block", fontSize: 12, color: COLOR.secondaryLabel, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.winners}</span>}
+                  {r.winners && <span style={{ display: "block", fontSize: 12, color: COLOR.label, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.winners}</span>}
+                  {r.losers && <span style={{ display: "block", fontSize: 12, color: COLOR.secondaryLabel, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>beat {r.losers}</span>}
                 </span>
                 {r.scored
                   ? <span style={{ fontSize: 20, fontWeight: 700, fontVariantNumeric: "tabular-nums", flexShrink: 0 }}>{r.ws}<span style={{ color: COLOR.secondaryLabel, fontWeight: 500 }}>–</span>{r.ls}</span>
@@ -2603,7 +2690,7 @@ function AppInner() {
         </>
       )}
 
-      {gameTab === "log" && <AttendanceScreen attendanceLog={attendanceLog} embedded onBack={() => setGameTab("game")} />}
+      {gameTab === "log" && <AttendanceScreen attendanceLog={attendanceLog} embedded onBack={() => setGameTab("game")} onEditGame={editHistoryScore} onRecap={openPastRecap} />}
 
       <nav style={s.tabBar} aria-label="Sections">
         <button style={{ ...s.tabItem, ...(gameTab === "game" ? s.tabItemActive : {}) }} onClick={() => { setGameTab("game"); window.scrollTo({ top: 0 }); }}>
