@@ -108,8 +108,8 @@ const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
 
 // Shown at the bottom of every screen so everyone can tell which version their
 // phone is running. Bump this (and package.json) with each update that goes live.
-const APP_VERSION = "1.5.1";
-const APP_VERSION_DATE = "Nov 10, 2026";
+const APP_VERSION = "1.5.2";
+const APP_VERSION_DATE = "Nov 16, 2026";
 function VersionTag() {
   return <p style={{ margin: "20px 0 8px", textAlign: "center", fontSize: 12, color: COLOR.secondaryLabel, fontVariantNumeric: "tabular-nums" }}>NCBC Ball v{APP_VERSION} · {APP_VERSION_DATE}</p>;
 }
@@ -286,6 +286,7 @@ function sessionPayload(d) {
     lastResult: d.lastResult ?? null,
     history: d.history ?? [],
     gameLog: d.gameLog ?? [],
+    sessionId: d.sessionId ?? null,
     timerRunning: d.timerRunning ?? false,
     timerDone: d.timerDone ?? false,
     endTime: d.endTime ?? null,
@@ -907,11 +908,16 @@ function CatchUpScreen({ players, teamSize, fullRoster, onAddPlayer, initialAssi
   );
 }
 
+// Attendance History entries: newer sessions carry an id (start time); older
+// ones were saved one per date, so their date is their key.
+const entryKey = e => e.id || e.date;
+const byNewest = (a, b) => b.date.localeCompare(a.date) || (b.startedAt || 0) - (a.startedAt || 0);
+const fmtTime = ms => new Date(ms).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 const fmtShortDate = iso => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
 
 function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap, onDelete }) {
   const [search, setSearch] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(null); // date waiting for "Yes, delete"
+  const [confirmDelete, setConfirmDelete] = useState(null); // entry key waiting for "Yes, delete"
   const q = search.trim().toLowerCase();
 
   const formatDate = iso => {
@@ -931,8 +937,10 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
   // Always sort by date, most recent first — enforced here at render time
   // rather than just trusting whatever order the data was written in.
   const sortedLog = [...attendanceLog]
-    .map(entry => ({ date: entry.date, attendees: normalize(entry), games: entry.games || [] }))
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .map(entry => ({ key: entryKey(entry), date: entry.date, startedAt: entry.startedAt, attendees: normalize(entry), games: entry.games || [] }))
+    .sort(byNewest);
+  // Dates with more than one session show each session's start time.
+  const perDate = sortedLog.reduce((m, e) => m.set(e.date, (m.get(e.date) || 0) + 1), new Map());
 
   // When searching, show every date a matching name appears, most recent
   // first — this is the "when did Josh attend" lookup, not just a date list.
@@ -973,8 +981,8 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
           const members = entry.attendees.filter(a => !a.isGuest);
           const guests = entry.attendees.filter(a => a.isGuest);
           return (
-            <div key={entry.date} style={s.card}>
-              <p style={s.sectionLabel}>{formatDate(entry.date)} · {entry.attendees.length} {entry.attendees.length === 1 ? "person" : "people"}</p>
+            <div key={entry.key} style={s.card}>
+              <p style={s.sectionLabel}>{formatDate(entry.date)}{perDate.get(entry.date) > 1 && entry.startedAt ? " · " + fmtTime(entry.startedAt) : ""} · {entry.attendees.length} {entry.attendees.length === 1 ? "person" : "people"}</p>
               {members.length > 0 && (
                 <div style={{ marginBottom: guests.length > 0 ? 10 : 0 }}>
                   <p style={s.attendanceGroupLabel}>🏀 Members ({members.length})</p>
@@ -993,7 +1001,7 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
                   {entry.games.map((gm, idx) => {
                     const Row = onEditGame ? "button" : "div";
                     return (
-                      <Row key={idx} type={onEditGame ? "button" : undefined} onClick={onEditGame ? () => onEditGame(entry.date, idx) : undefined}
+                      <Row key={idx} type={onEditGame ? "button" : undefined} onClick={onEditGame ? () => onEditGame(entry.key, idx) : undefined}
                         aria-label={onEditGame ? "Fix game " + gm.g + " on " + fmtShortDate(entry.date) : undefined}
                         style={{ ...s.attendanceNameList, display: "flex", gap: 8, width: "100%", minHeight: 44, padding: "4px 0", border: "none", background: "none", textAlign: "left", fontFamily: "inherit", cursor: onEditGame ? "pointer" : "default", color: COLOR.label, alignItems: "flex-start" }}>
                         <span style={{ width: 28, flexShrink: 0, color: COLOR.secondaryLabel }}>G{gm.g}</span>
@@ -1008,25 +1016,25 @@ function AttendanceScreen({ attendanceLog, onBack, embedded, onEditGame, onRecap
                     );
                   })}
                   {onRecap && (
-                    <button type="button" onClick={() => onRecap(entry.date)}
+                    <button type="button" onClick={() => onRecap(entry.key)}
                       style={{ width: "100%", height: 48, marginTop: 10, border: "none", borderRadius: 12, background: "#FFC24D", color: "#0E1B38", fontSize: 16, fontWeight: 800, fontFamily: "inherit", cursor: "pointer" }}>
                       Make recap photo
                     </button>
                   )}
                 </div>
               )}
-              {!q && onDelete && (confirmDelete === entry.date ? (
+              {!q && onDelete && (confirmDelete === entry.key ? (
                 <div role="alert" style={{ marginTop: 12, padding: 12, borderRadius: 12, background: COLOR.tertiarySystemBackground }}>
-                  <p style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 600, color: COLOR.label, textAlign: "center" }}>Delete {fmtShortDate(entry.date)}? Its attendance and scores are removed for everyone. This can't be undone.</p>
+                  <p style={{ margin: "0 0 10px", fontSize: 15, fontWeight: 600, color: COLOR.label, textAlign: "center" }}>Delete {fmtShortDate(entry.date)}{perDate.get(entry.date) > 1 && entry.startedAt ? " (" + fmtTime(entry.startedAt) + ")" : ""}? Its attendance and scores are removed for everyone. This can't be undone.</p>
                   <div style={{ display: "flex", gap: 8 }}>
                     <button type="button" onClick={() => setConfirmDelete(null)}
                       style={{ flex: 1, height: 44, border: "none", borderRadius: 10, background: COLOR.secondarySystemBackground || COLOR.separator, color: COLOR.label, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>Keep it</button>
-                    <button type="button" onClick={() => { setConfirmDelete(null); onDelete(entry.date); }}
+                    <button type="button" onClick={() => { setConfirmDelete(null); onDelete(entry.key); }}
                       style={{ flex: 1, height: 44, border: "none", borderRadius: 10, background: "#FF3B30", color: "#fff", fontSize: 15, fontWeight: 700, fontFamily: "inherit", cursor: "pointer" }}>Yes, delete</button>
                   </div>
                 </div>
               ) : (
-                <button type="button" onClick={() => setConfirmDelete(entry.date)} aria-label={"Delete " + fmtShortDate(entry.date)}
+                <button type="button" onClick={() => setConfirmDelete(entry.key)} aria-label={"Delete " + fmtShortDate(entry.date)}
                   style={{ display: "block", margin: "10px auto 0", height: 44, padding: "0 12px", border: "none", background: "none", color: "#FF3B30", fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" }}>
                   Delete this night
                 </button>
@@ -1155,6 +1163,10 @@ function AppInner() {
   const [gameCount, setGameCount] = useState(1);
   const [lastResult, setLastResult] = useState(null);
   const [history, setHistory] = useState([]);
+  // Identifies this session in Attendance History (its start time in ms), so
+  // two sessions on the same date — say a test run and the real game — are
+  // kept as separate entries. Set when the game screen opens, cleared on End.
+  const [sessionId, setSessionId] = useState(null);
   const [gameLog, setGameLog] = useState([]); // one entry per finished game: who won / who lost (full-game players only), side ("A"/"B") and optional final score (ws/ls)
   // Final-score sheet. { winnerIsA, a, b } for a new result, or { editIdx, winnerIsA, a, b } when fixing a past game's score.
   const [scorePrompt, setScorePrompt] = useState(null);
@@ -1276,6 +1288,7 @@ function AppInner() {
           setLastResult(d.lastResult ?? null);
           setHistory(d.history ?? []);
           setGameLog(d.gameLog ?? []);
+          setSessionId(d.sessionId ?? null);
           setTimerRunning(d.timerRunning ?? false);
           setTimerDone(d.timerDone ?? false);
           setEndTime(d.endTime ?? null);
@@ -1292,12 +1305,12 @@ function AppInner() {
   // defaults this component briefly starts with.
   useEffect(() => {
     if (!firestoreReady) return;
-    const payload = sessionPayload({ view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, timerRunning, timerDone, endTime, pausedSecondsLeft });
+    const payload = sessionPayload({ view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, sessionId, timerRunning, timerDone, endTime, pausedSecondsLeft });
     const json = JSON.stringify(payload);
     if (json === lastSyncedSession.current) return;
     lastSyncedSession.current = json;
     setDoc(getSessionDoc(), payload).catch(err => console.error("Session write error:", err));
-  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, timerRunning, timerDone, endTime, pausedSecondsLeft]);
+  }, [firestoreReady, view, teamSize, gameMode, setupPlayers, joinCounter, teamA, teamB, queue, sittingOut, injured, left, gameCount, lastResult, history, gameLog, sessionId, timerRunning, timerDone, endTime, pausedSecondsLeft]);
 
   // Custom roster persists separately from session data — surviving "Clear
   // session" and "End session" since it's about the community, not one night.
@@ -1534,6 +1547,26 @@ function AppInner() {
   const [sessionSummary, setSessionSummary] = useState(null);
   const [wrapImg, setWrapImg] = useState(null); // { url, blob }
 
+  // iPhone Safari sometimes leaves the page shifted after the keyboard closes,
+  // which strands the bottom tab bar mid-screen until the next scroll. When a
+  // text box loses focus or the keyboard area goes away, nudge the scroll
+  // position so Safari puts fixed elements back where they belong.
+  useEffect(() => {
+    const isText = el => el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA");
+    const settle = () => setTimeout(() => { if (!isText(document.activeElement)) window.scrollTo(window.scrollX, window.scrollY); }, 120);
+    const onFocusOut = e => { if (isText(e.target)) settle(); };
+    const vv = window.visualViewport;
+    let lastH = vv ? vv.height : 0;
+    const onResize = () => { if (vv.height > lastH + 80) settle(); lastH = vv.height; };
+    document.addEventListener("focusout", onFocusOut);
+    if (vv) vv.addEventListener("resize", onResize);
+    return () => { document.removeEventListener("focusout", onFocusOut); if (vv) vv.removeEventListener("resize", onResize); };
+  }, []);
+
+  useEffect(() => {
+    if (firestoreReady && view === VIEWS.GAME && !sessionId) setSessionId(String(Date.now()));
+  }, [firestoreReady, view, sessionId]);
+
   // Step 1: compute the night's story and show it (no wipe yet)
   const endSession = () => {
     const everyone = [...teamA, ...teamB, ...queue, ...sittingOut, ...injured, ...left];
@@ -1556,9 +1589,13 @@ function AppInner() {
       if (gm.ws != null && gm.ls != null) { out.ws = gm.ws; out.ls = gm.ls; }
       return out;
     });
+    // One entry per session. Ending the same session again (after "Go back —
+    // keep playing") updates its entry; a different session on the same date
+    // gets its own entry and never replaces this one.
+    const id = sessionId || String(Date.now());
+    const entry = { id, date: today, startedAt: Number(id) || Date.now(), attendees, ...(games.length ? { games } : {}) };
     setAttendanceLog(prev => {
-      const withoutToday = prev.filter(e => e.date !== today);
-      const updated = [...withoutToday, { date: today, attendees, ...(games.length ? { games } : {}) }].sort((a, b) => b.date.localeCompare(a.date));
+      const updated = [...prev.filter(e => e.id !== id), entry].sort(byNewest);
       setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
       return updated;
     });
@@ -1600,6 +1637,7 @@ function AppInner() {
     setPlayerActionModal(null); setLastWinner(null); setMoveConfirm(null);
     setTimerSeconds(TIMER_DURATION); setTimerRunning(false); setTimerDone(false);
     setSessionSummary(null);
+    setSessionId(null);
     setView(VIEWS.SETUP);
   };
 
@@ -1863,18 +1901,18 @@ function AppInner() {
     setScorePrompt({ editIdx: idx, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
   });
   // ── PAST NIGHTS (Attendance History) ──────────────────────────────────────
-  const editHistoryScore = withAdmin((date, idx) => {
-    const entry = attendanceLog.find(e => e.date === date);
+  const editHistoryScore = withAdmin((key, idx) => {
+    const entry = attendanceLog.find(e => entryKey(e) === key);
     const gm = entry && entry.games && entry.games[idx];
     if (!gm) return;
     const winnerIsA = gm.side !== "B";
     const ws = gm.ws != null ? String(gm.ws) : "", ls = gm.ls != null ? String(gm.ls) : "";
-    setScorePrompt({ histDate: date, histIdx: idx, g: gm.g, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
+    setScorePrompt({ histKey: key, histDate: entry.date, histIdx: idx, g: gm.g, winnerIsA, a: winnerIsA ? ws : ls, b: winnerIsA ? ls : ws, err: "" });
   });
   const saveHistoryGame = (sp, score) => {
     setAttendanceLog(prev => {
       const updated = prev.map(e => {
-        if (e.date !== sp.histDate || !e.games) return e;
+        if (entryKey(e) !== sp.histKey || !e.games) return e;
         return { ...e, games: e.games.map((gm, i) => {
           if (i !== sp.histIdx) return gm;
           const { ws, ls, ...rest } = gm;
@@ -1887,15 +1925,15 @@ function AppInner() {
       return updated;
     });
   };
-  const deleteHistoryNight = withAdmin(date => {
+  const deleteHistoryNight = withAdmin(key => {
     setAttendanceLog(prev => {
-      const updated = prev.filter(e => e.date !== date);
+      const updated = prev.filter(e => entryKey(e) !== key);
       setDoc(getAttendanceDoc(), { entries: updated }).catch(err => console.error("Attendance write error:", err));
       return updated;
     });
   });
-  const openPastRecap = date => {
-    const entry = attendanceLog.find(e => e.date === date);
+  const openPastRecap = key => {
+    const entry = attendanceLog.find(e => entryKey(e) === key);
     if (entry) setSessionSummary(summaryFromEntry(entry));
   };
 
