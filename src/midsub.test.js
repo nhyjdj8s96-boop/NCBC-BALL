@@ -1,5 +1,5 @@
 // Mid-game subs follow their team's streak: when the team rotates off after
-// two straight wins, the sub goes with them and is first in line next game.
+// two straight wins, the sub goes with them and keeps his place in line.
 import React from "react";
 import { render, screen, fireEvent, cleanup, within } from "@testing-library/react";
 
@@ -33,7 +33,7 @@ function subOutHome(name, reason) {
 
 afterEach(() => cleanup());
 
-test.each([["Quick break"], ["Hurt"], ["Done for the day"]])("%s: the sub rotates off with his team and leads the line", async reason => {
+test.each([["Quick break"], ["Hurt"], ["Done for the day"]])("%s: the sub rotates off with his team and keeps his place in line", async reason => {
   await start(16); // 5 v 5 with 6 waiting
   skipWin(true); // Home 1-0: everyone on Home is at a 1-win streak
   let st = read();
@@ -46,14 +46,13 @@ test.each([["Quick break"], ["Hurt"], ["Done for the day"]])("%s: the sub rotate
   expect(sub.teamStreak).toBe(1);
   skipWin(true); // Home wins again: the team's second straight win
   st = read();
-  // Nobody from that Home team (sub included) is still on Home.
-  const onHome = st.teamA.map(p => p.id);
-  expect(onHome).not.toContain(sub.id);
-  // The sub is back at the front of the line, not the back.
-  expect(st.queue[0].id).toBe(sub.id);
-  expect(st.queue[0].winStreak).toBe(0);
+  // His team's streak ended with him: he's not carrying a 2-win streak anywhere.
+  const all = [...st.teamA, ...st.teamB, ...st.queue];
+  expect(all.find(p => p.id === sub.id).winStreak).toBe(0);
+  // He keeps his place in line: he was next up, so he plays the next game.
+  expect([...st.teamA, ...st.teamB].map(p => p.id)).toContain(sub.id);
   // Clean-up flags don't linger on anyone.
-  [...st.teamA, ...st.teamB, ...st.queue].forEach(p => { expect(p.midSub).toBeFalsy(); expect(p.wasMidSub).toBeUndefined(); });
+  [...st.teamA, ...st.teamB, ...st.queue].forEach(p => { expect(p.midSub).toBeFalsy(); expect(p.wasMidSub).toBeUndefined(); expect(p.subWait).toBeUndefined(); });
   void subName;
 });
 
