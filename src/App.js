@@ -97,6 +97,10 @@ function onSnapshot(ref, cb) { return _usingFirebase ? _fsonSnapshot(ref, cb) : 
 let _sessionDocCache = null, _rosterDocCache = null;
 function getSessionDoc() { if (!_sessionDocCache || _sessionDocCache._firebaseState !== _usingFirebase) { _sessionDocCache = doc(null, "sessions", "ncbc-main"); _sessionDocCache._firebaseState = _usingFirebase; } return _sessionDocCache; }
 function getRosterDoc() { if (!_rosterDocCache || _rosterDocCache._firebaseState !== _usingFirebase) { _rosterDocCache = doc(null, "sessions", "ncbc-roster"); _rosterDocCache._firebaseState = _usingFirebase; } return _rosterDocCache; }
+// The one members list (every regular, editable in the app). Replaces the old
+// split between KNOWN_PLAYERS in code and "added" names in ncbc-roster.
+let _membersDocCache = null;
+function getMembersDoc() { if (!_membersDocCache || _membersDocCache._firebaseState !== _usingFirebase) { _membersDocCache = doc(null, "sessions", "ncbc-members"); _membersDocCache._firebaseState = _usingFirebase; } return _membersDocCache; }
 let _attendanceDocCache = null;
 function getAttendanceDoc() { if (!_attendanceDocCache || _attendanceDocCache._firebaseState !== _usingFirebase) { _attendanceDocCache = doc(null, "sessions", "ncbc-attendance"); _attendanceDocCache._firebaseState = _usingFirebase; } return _attendanceDocCache; }
 
@@ -108,8 +112,8 @@ const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
 
 // Shown at the bottom of every screen so everyone can tell which version their
 // phone is running. Bump this (and package.json) with each update that goes live.
-const APP_VERSION = "1.5.4";
-const APP_VERSION_DATE = "Nov 16, 2026";
+const APP_VERSION = "1.6.0";
+const APP_VERSION_DATE = "Nov 17, 2026";
 function VersionTag() {
   return <p style={{ margin: "20px 0 8px", textAlign: "center", fontSize: 12, color: COLOR.secondaryLabel, fontVariantNumeric: "tabular-nums" }}>NCBC Ball v{APP_VERSION} · {APP_VERSION_DATE}</p>;
 }
@@ -354,7 +358,7 @@ function ConfirmModal({ moveConfirm, setMoveConfirm }) {
   );
 }
 
-function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
+function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster, onEditMembers }) {
   const added = new Set(setupPlayers.map(p => p.name.toLowerCase()));
   const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
   // Full roster, sorted once — position never changes as people sign up.
@@ -363,7 +367,10 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
   const all = [...fullRoster].sort((a, b) => firstName(a).localeCompare(firstName(b)));
   return (
     <div style={s.card}>
-      <p style={s.sectionLabel}>Tap your name to sign up</p>
+      <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+        <p style={s.sectionLabel}>Tap your name to sign up</p>
+        {onEditMembers && <button type="button" onClick={onEditMembers} style={{ minHeight: 44, padding: "0 4px", marginTop: -14, border: "none", background: "none", color: COLOR.tint, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer", flexShrink: 0 }}>Edit members</button>}
+      </div>
       <p style={s.chipHint}>Tapped the wrong name? Tap it again to remove.</p>
       <div style={s.chipGrid}>
         {all.map(n => {
@@ -383,6 +390,78 @@ function SetupChips({ setupPlayers, addPlayer, removeByName, fullRoster }) {
             </button>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// Edit members: one list for everyone. Add, rename or remove anyone; changes
+// reach every phone right away. History and stats are saved by name, so past
+// nights keep the names they were played under.
+function MembersEditor({ members, onAdd, onRename, onRemove, onClose }) {
+  const [q, setQ] = useState("");
+  const [editing, setEditing] = useState(null);   // { name, value }
+  const [confirm, setConfirm] = useState(null);   // name waiting for "Remove"
+  const [err, setErr] = useState("");
+  const firstName = n => n.replace(/^(Pastor|Dr|Mr|Mrs|Ms)\s+/i, "").trim().split(/\s+/)[0];
+  // Capitalize each word's first letter but leave the rest as typed (DeShawn stays DeShawn).
+  const capitalize = n => n.trim().split(/\s+/).filter(Boolean).map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
+  const sorted = [...members].sort((a, b) => firstName(a).localeCompare(firstName(b)) || a.localeCompare(b));
+  const typed = capitalize(q.trim());
+  const shown = typed ? sorted.filter(n => n.toLowerCase().includes(typed.toLowerCase())) : sorted;
+  const exists = n => members.some(m => m.toLowerCase() === n.toLowerCase());
+  const add = () => { if (!typed) return; if (exists(typed)) { setErr(typed + " is already a member."); return; } onAdd(typed); setQ(""); setErr(""); };
+  const saveRename = () => {
+    const v = capitalize(editing.value.trim());
+    if (!v) { setErr("Name can't be empty."); return; }
+    if (v.toLowerCase() !== editing.name.toLowerCase() && exists(v)) { setErr(v + " is already a member."); return; }
+    if (v !== editing.name) onRename(editing.name, v);
+    setEditing(null); setErr("");
+  };
+  const rowBtn = { minHeight: 44, padding: "0 10px", border: "none", borderRadius: 10, fontSize: 15, fontWeight: 600, fontFamily: "inherit", cursor: "pointer" };
+  return (
+    <div style={s.overlay} onClick={onClose}>
+      <div style={{ ...s.modal, maxHeight: "88vh", display: "flex", flexDirection: "column" }} onClick={e => e.stopPropagation()}>
+        <div style={s.modalGrabber} />
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4, width: "100%", alignSelf: "stretch" }}>
+          <p style={{ ...s.modalTitle, margin: 0, textAlign: "left" }}>Members ({members.length})</p>
+          <button type="button" onClick={onClose} style={{ ...rowBtn, background: "none", color: COLOR.tint, fontWeight: 700 }}>Done</button>
+        </div>
+        <p style={{ ...s.modalDesc, marginTop: 4, textAlign: "left", alignSelf: "stretch" }}>Changes show on every phone right away. Past nights keep the names they were played under.</p>
+        <div style={{ display: "flex", gap: 8, marginBottom: 6, width: "100%", alignSelf: "stretch" }}>
+          <input style={s.input} value={q} placeholder="Search or add a name" aria-label="Search or add a member"
+            onChange={e => { setQ(e.target.value); setErr(""); }} onKeyDown={e => { if (e.key === "Enter" && typed && !exists(typed)) add(); }} />
+          {typed && !exists(typed) && <button type="button" onClick={add} style={{ ...rowBtn, background: COLOR.tint, color: "#fff", flexShrink: 0 }}>Add</button>}
+        </div>
+        {err && <p role="alert" style={{ margin: "2px 0 6px", fontSize: 14, fontWeight: 600, color: "#D70015" }}>{err}</p>}
+        <div style={{ overflowY: "auto", margin: "0 -4px", padding: "0 4px", WebkitOverflowScrolling: "touch", width: "100%", alignSelf: "stretch" }}>
+          {shown.length === 0 && <p style={{ ...s.modalDesc, textAlign: "center", padding: "16px 0" }}>No member named "{typed}". Tap Add to add them.</p>}
+          {shown.map(n => (
+            <div key={n} style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 52, borderTop: "0.5px solid " + COLOR.separator }}>
+              {editing && editing.name === n ? (
+                <>
+                  <input style={s.input} autoFocus value={editing.value} aria-label={"New name for " + n}
+                    onChange={e => { setEditing({ ...editing, value: e.target.value }); setErr(""); }} onKeyDown={e => { if (e.key === "Enter") saveRename(); }} />
+                  <button type="button" onClick={saveRename} style={{ ...rowBtn, background: COLOR.tint, color: "#fff" }}>Save</button>
+                  <button type="button" onClick={() => { setEditing(null); setErr(""); }} style={{ ...rowBtn, background: "none", color: COLOR.secondaryLabel }}>Cancel</button>
+                </>
+              ) : confirm === n ? (
+                <>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 15, fontWeight: 600, color: COLOR.label }}>Remove {n}?</span>
+                  <button type="button" onClick={() => setConfirm(null)} style={{ ...rowBtn, background: COLOR.tertiarySystemBackground, color: COLOR.label }}>Keep</button>
+                  <button type="button" onClick={() => { onRemove(n); setConfirm(null); }} style={{ ...rowBtn, background: "#D70015", color: "#fff" }}>Remove</button>
+                </>
+              ) : (
+                <>
+                  <span style={{ width: 32, height: 32, borderRadius: 16, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 700, background: "hsl(" + nameHue(n) + ", 65%, 88%)", color: "hsl(" + nameHue(n) + ", 55%, 32%)" }}>{nameInitials(n)}</span>
+                  <span style={{ flex: 1, minWidth: 0, fontSize: 16, color: COLOR.label, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n}</span>
+                  <button type="button" aria-label={"Rename " + n} onClick={() => { setEditing({ name: n, value: n }); setConfirm(null); setErr(""); }} style={{ ...rowBtn, background: "none", color: COLOR.tint }}>Rename</button>
+                  <button type="button" aria-label={"Remove " + n} onClick={() => { setConfirm(n); setEditing(null); setErr(""); }} style={{ ...rowBtn, background: "none", color: "#D70015" }}>Remove</button>
+                </>
+              )}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -1189,6 +1268,14 @@ function AppInner() {
   const [, setAttendanceReady] = useState(false);
   const [attendanceView, setAttendanceView] = useState(false); // toggles the attendance browser screen
   const [rosterReady, setRosterReady] = useState(false);
+  // The one members list. null = not saved yet (first run: seeded from the old
+  // built-in list plus every added name). If the shared list can't be read or
+  // written, the app falls back to the old two-list behaviour.
+  const [members, setMembers] = useState(null);
+  const [membersRemoved, setMembersRemoved] = useState([]);
+  const [membersReady, setMembersReady] = useState(false);
+  const [membersBlocked, setMembersBlocked] = useState(false);
+  const [membersEditor, setMembersEditor] = useState(false);
   const [swapPicker, setSwapPicker] = useState(null); // { playerId, isTeamA }
   // Assignments Catch Up opens with. Empty from the setup screen; from a
   // live game it mirrors the court so you only correct what is wrong.
@@ -1355,7 +1442,55 @@ function AppInner() {
     return () => { cancelled = true; unsub(); };
   }, []);
 
-  const fullRoster = useMemo(() => [...KNOWN_PLAYERS, ...customRoster], [customRoster]);
+  useEffect(() => {
+    let unsub = () => {};
+    let cancelled = false;
+    _firebaseReadyPromise.then(() => {
+      if (cancelled) return;
+      unsub = onSnapshot(getMembersDoc(), snap => {
+        const d = snap.data();
+        setMembers(d && Array.isArray(d.members) ? d.members : null);
+        setMembersRemoved(d && Array.isArray(d.removed) ? d.removed : []);
+        setMembersReady(true);
+      }, err => { console.error("Members sync error:", err); setMembersBlocked(true); setMembersReady(true); });
+    });
+    return () => { cancelled = true; unsub(); };
+  }, []);
+  const saveMembers = (list, removed) => {
+    setMembers(list); setMembersRemoved(removed);
+    setDoc(getMembersDoc(), { members: list, removed }).catch(err => { console.error("Members write error:", err); setMembersBlocked(true); });
+  };
+  // First run: build the one list from the old built-in names plus everyone
+  // added in the app. After that, a name added on a phone still running an
+  // older version (it lands in ncbc-roster) is folded in, unless removed here.
+  useEffect(() => {
+    if (!membersReady || !rosterReady || membersBlocked) return;
+    const has = (list, n) => list.some(m => m.toLowerCase() === n.toLowerCase());
+    if (members === null) {
+      const seed = [];
+      [...KNOWN_PLAYERS, ...customRoster].forEach(n => { if (!has(seed, n)) seed.push(n); });
+      saveMembers(seed, []);
+      return;
+    }
+    const extra = customRoster.filter(n => !has(members, n) && !membersRemoved.includes(n.toLowerCase()));
+    if (extra.length) saveMembers([...members, ...extra], membersRemoved);
+  }, [membersReady, rosterReady, membersBlocked, members, membersRemoved, customRoster]); // eslint-disable-line react-hooks/exhaustive-deps
+  const membersLive = !membersBlocked && Array.isArray(members);
+  const fullRoster = useMemo(() => membersLive ? members : [...KNOWN_PLAYERS, ...customRoster], [membersLive, members, customRoster]);
+  const addMember = name => {
+    const removed = membersRemoved.filter(r => r !== name.toLowerCase());
+    saveMembers([...members, name], removed);
+    // Phones still on an older version read ncbc-roster, so keep it in step.
+    setCustomRoster(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]);
+  };
+  const removeMember = name => {
+    saveMembers(members.filter(n => n !== name), [...membersRemoved.filter(r => r !== name.toLowerCase()), name.toLowerCase()]);
+    setCustomRoster(prev => prev.filter(n => n.toLowerCase() !== name.toLowerCase()));
+  };
+  const renameMember = (from, to) => {
+    saveMembers(members.map(n => n === from ? to : n), [...membersRemoved.filter(r => r !== to.toLowerCase() && r !== from.toLowerCase()), from.toLowerCase()]);
+    setCustomRoster(prev => prev.map(n => n.toLowerCase() === from.toLowerCase() ? to : n));
+  };
 
   // timer
   // Timer state is now genuinely shared across devices. `endTime` (a real
@@ -1506,7 +1641,11 @@ function AppInner() {
     setPendingSignup(name);
   }, [joinCounter, view, setupPlayers, teamA, teamB, queue, sittingOut, injured, left, fullRoster]);
 
-  const addToRoster = name => { setCustomRoster(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]); };
+  const addToRoster = name => {
+    if (fullRoster.some(n => n.toLowerCase() === name.toLowerCase())) return;
+    if (membersLive) addMember(name);
+    else setCustomRoster(prev => prev.some(n => n.toLowerCase() === name.toLowerCase()) ? prev : [...prev, name]);
+  };
 
   const forceAdd = name => {
     const jc = joinCounter + 1; setJoinCounter(jc); const p = initPlayer(name, jc);
@@ -2105,7 +2244,7 @@ function AppInner() {
       );
 
   // ── LOADING ───────────────────────────────────────────────────────────────
-  if (!firestoreReady || !rosterReady) {
+  if (!firestoreReady || !rosterReady || !membersReady) {
     return (
       <div style={{ ...s.root, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: "100vh" }}>
         <img src={NCBC_LOGO} alt="NCBC" style={{ width: 64, height: "auto", marginBottom: 16, opacity: 0.6 }} />
@@ -2208,7 +2347,7 @@ function AppInner() {
           <button style={s.logoutBtn} onClick={() => setEndSessionConfirm(true)}>Clear saved session</button>
         </div>
         <VersionTag />
-        {isAdmin && customRoster.length > 0 && (
+        {isAdmin && !membersLive && customRoster.length > 0 && (
           <div style={s.card}>
             <p style={s.sectionLabel}>Added regulars ({customRoster.length})</p>
             {customRoster.map(n => (
@@ -2254,7 +2393,8 @@ function AppInner() {
               : "The winning team stays on until they actually lose — no cap on the streak."}
           </p>
         </div>
-        <SetupChips setupPlayers={setupPlayers} addPlayer={addPlayer} removeByName={removeSetupByName} fullRoster={fullRoster} />
+        <SetupChips setupPlayers={setupPlayers} addPlayer={addPlayer} removeByName={removeSetupByName} fullRoster={fullRoster} onEditMembers={isAdmin && membersLive ? () => setMembersEditor(true) : null} />
+        {membersEditor && membersLive && <MembersEditor members={members} onAdd={addMember} onRename={renameMember} onRemove={removeMember} onClose={() => setMembersEditor(false)} />}
         <div style={s.card}>
           <p style={s.sectionLabel}>Not on the list?</p>
           <div style={s.row}>
