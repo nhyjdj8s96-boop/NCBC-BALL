@@ -108,7 +108,7 @@ const VIEWS = { SETUP: "setup", GAME: "game", CATCHUP: "catchup" };
 
 // Shown at the bottom of every screen so everyone can tell which version their
 // phone is running. Bump this (and package.json) with each update that goes live.
-const APP_VERSION = "1.5.2";
+const APP_VERSION = "1.5.3";
 const APP_VERSION_DATE = "Nov 16, 2026";
 function VersionTag() {
   return <p style={{ margin: "20px 0 8px", textAlign: "center", fontSize: 12, color: COLOR.secondaryLabel, fontVariantNumeric: "tabular-nums" }}>NCBC Ball v{APP_VERSION} · {APP_VERSION_DATE}</p>;
@@ -1716,8 +1716,9 @@ function AppInner() {
     else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => [...prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...subbed, hasPlayed: true, gamesPlayed: (subbed.gamesPlayed || 0) + 1, skipUntilGame: skipTarget }]); }
     setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     const tick = (subbed.winStreak || 0) === 0;
-    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
-    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
+    const sub = { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick, midSub: true, teamStreak: subbed.winStreak || 0 };
+    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), sub]);
+    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), sub]);
   });
 
   // Injured players go to their own dedicated list — never auto-pulled as
@@ -1732,8 +1733,9 @@ function AppInner() {
     else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); }
     const tick = (hurt.winStreak || 0) === 0;
     setInjured(prev => [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), { ...hurt, hasPlayed: true, gamesPlayed: (hurt.gamesPlayed || 0) + 1, winStreak: 0 }]);
-    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
-    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
+    const sub = { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick, midSub: true, teamStreak: hurt.winStreak || 0 };
+    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), sub]);
+    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), sub]);
   });
 
   const leaveFromCourt = withAdmin((playerId, isTeamA, incOverride) => {
@@ -1746,8 +1748,9 @@ function AppInner() {
     else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); }
     setInjured(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     setLeft(prev => [...prev, { ...leaving, hasPlayed: true, gamesPlayed: (leaving.gamesPlayed || 0) + 1, leftAtGame: gameCount }]);
-    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false }]);
-    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), { ...inc, hasPlayed: true, streakedOut: false }]);
+    const sub = { ...inc, hasPlayed: true, streakedOut: false, midSub: true, teamStreak: leaving.winStreak || 0 };
+    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== playerId), sub]);
+    else setTeamB(prev => [...prev.filter(x => x.id !== playerId), sub]);
   });
 
   // Player was placed on a team but backs out BEFORE the game starts —
@@ -1781,8 +1784,9 @@ function AppInner() {
     else { setQueue(prev => prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }))); setSittingOut(prev => injury ? prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })) : [...prev.filter(x => x.id !== inc.id).map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), out]); }
     setInjured(prev => injury ? [...prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })), out] : prev.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 })));
     const tick = (replaced.winStreak || 0) === 0;
-    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== replacedId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
-    else setTeamB(prev => [...prev.filter(x => x.id !== replacedId), { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick }]);
+    const sub = { ...inc, hasPlayed: true, streakedOut: false, injurySubGame: true, partialStreakTick: tick, midSub: true, teamStreak: replaced.winStreak || 0 };
+    if (isTeamA) setTeamA(prev => [...prev.filter(x => x.id !== replacedId), sub]);
+    else setTeamB(prev => [...prev.filter(x => x.id !== replacedId), sub]);
   };
 
   const doSwap = (aId, bId) => {
@@ -1810,8 +1814,12 @@ function AppInner() {
     const setLastResultScored = r => setLastResult(scoreTag ? { ...r, score: scoreTag } : r);
     // Partial-game subs: stats never count, but the rotation clock ticks if
     // they entered during the team's FIRST win (they rode the whole streak).
-    const winnerUpd = winner.map(p => ({ ...p, winStreak: p.injurySubGame ? (p.partialStreakTick ? (p.winStreak || 0) + 1 : (p.winStreak || 0)) : (p.winStreak || 0) + 1, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, wins: p.injurySubGame ? (p.wins || 0) : (p.wins || 0) + 1, injurySubGame: false, partialStreakTick: false }));
-    const loserUpd = loser.map(p => ({ ...p, winStreak: 0, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, injurySubGame: false, partialStreakTick: false }));
+    // A mid-game sub takes over the streak of the player he replaced, so when
+    // the team rotates off he goes with them (and gets his place back at the
+    // front of the line below) instead of staying on alone.
+    const subStreak = p => p.midSub ? (p.teamStreak || 0) + 1 : p.injurySubGame ? (p.partialStreakTick ? (p.winStreak || 0) + 1 : (p.winStreak || 0)) : (p.winStreak || 0) + 1;
+    const winnerUpd = winner.map(p => ({ ...p, winStreak: subStreak(p), gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, wins: p.injurySubGame ? (p.wins || 0) : (p.wins || 0) + 1, injurySubGame: false, partialStreakTick: false, wasMidSub: !!p.midSub, midSub: false, teamStreak: undefined }));
+    const loserUpd = loser.map(p => ({ ...p, winStreak: 0, gamesPlayed: p.injurySubGame ? (p.gamesPlayed || 0) : (p.gamesPlayed || 0) + 1, injurySubGame: false, partialStreakTick: false, midSub: false, teamStreak: undefined }));
     // Remember who won and who lost (players who only subbed in mid-game are left out).
     const logGame = () => setGameLog(prev => [...prev, { g: gameCount, side: winnerIsA ? "A" : "B", w: winner.filter(p => !p.injurySubGame).map(p => p.id), l: loser.filter(p => !p.injurySubGame).map(p => p.id), ...(score ? { ws: score.ws, ls: score.ls } : {}) }]);
     const wantsOut = gameMode === "king" ? [] : winnerUpd.filter(p => p.winStreak >= 2);
@@ -1853,7 +1861,8 @@ function AppInner() {
     // Everyone waiting in line while this game was played sat it out: add it to their running total too.
     const agedQ = queue.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1, gamesSat: (p.gamesSat || 0) + 1 }));
     const loserAged = loserUpd.map(p => ({ ...p, roundsWaited: p.roundsWaited + 1 }));
-    const soAged = streakOut.map(p => ({ ...p, winStreak: 0, roundsWaited: 0, hasPlayed: true, streakedOut: true }));
+    const soAged = streakOut.filter(p => !p.wasMidSub).map(p => ({ ...p, winStreak: 0, roundsWaited: 0, hasPlayed: true, streakedOut: true }));
+    const subsOff = streakOut.filter(p => p.wasMidSub);
     // Guaranteed one-game-break subs: figure out who's due back BEFORE
     // picking the new team, so they're actually eligible to be placed on
     // the court this game — not just queued up for the game after.
@@ -1867,8 +1876,11 @@ function AppInner() {
     const { nextTeam: challenger, bench: nq } = pickNextTeam(pool, teamSize);
     let fillers = [], bench2 = nq;
     if (streakOut.length > 0) { const { nextTeam: fill, bench: af } = pickNextTeam(nq, teamSize); fillers = fill.slice(0, streakOut.length).map(p => ({ ...p, roundsWaited: 0, streakedOut: false })); bench2 = [...af, ...fill.slice(streakOut.length)]; }
-    const winTeam = [...staying, ...fillers];
-    const finalQ = sortQueue([...bench2, ...soAged]);
+    const winTeam = [...staying, ...fillers].map(({ wasMidSub, ...p }) => p);
+    // Subs who rotated off with their team sit just this game, then they're first in line.
+    const topWait = Math.max(maxWaitSoFar, ...bench2.map(p => p.roundsWaited || 0));
+    const subsBack = subsOff.map(({ wasMidSub, ...p }) => ({ ...p, winStreak: 0, roundsWaited: topWait + 1, hasPlayed: true, streakedOut: false }));
+    const finalQ = sortQueue([...bench2, ...soAged.map(({ wasMidSub, ...p }) => p), ...subsBack]);
     if (winnerIsA) { setTeamA(winTeam); setTeamB(challenger.map(p => ({ ...p, roundsWaited: 0, streakedOut: false }))); }
     else { setTeamB(winTeam); setTeamA(challenger.map(p => ({ ...p, roundsWaited: 0, streakedOut: false }))); }
     setQueue(finalQ);
